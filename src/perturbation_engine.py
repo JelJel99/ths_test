@@ -191,6 +191,10 @@ class _SimilarityChecker:
             model_name
         ).to(self.device)
 
+        print(f"Model Name: {model_name}")
+        print(f"Tokenizer: {self.tokenizer}")
+        print(f"Model Used: {self.model}")
+        
         self.model.eval()
 
         logger.info(
