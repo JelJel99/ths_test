@@ -251,7 +251,7 @@ class EvaluationPipeline:
 
         model_output_dir = os.path.join(self.output_dir, model_name)
         perturbation_output_dir = os.path.join(
-            "/content/drive/MyDrive/thesis/results/perturb_data",
+            "/content/drive/MyDrive/thesis/results",
             model_name
         )
 

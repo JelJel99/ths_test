@@ -1671,16 +1671,6 @@ class SemanticWordSubstitution(
                 continue
 
             # ================================================================
-            # Lookup statistics
-            # ================================================================
-            lookup_source = diagnosis[
-                "lookup_source"
-            ]
-            lookup_stats[
-                lookup_source
-            ] += 1
-
-            # ================================================================
             # No synonym candidates
             # ================================================================
             if diagnosis["synonyms_total"] == 0:
@@ -1812,23 +1802,7 @@ class SemanticWordSubstitution(
                 "NO_VALID_SEMANTIC_CANDIDATE",
                 target_intensity=intensity,
                 total_words=len(words),
-
-                direct_lookup_words=(
-                    lookup_stats["direct"]
-                ),
-
-                reverse_parent_lookup_words=(
-                    lookup_stats["reverse_parent"]
-                ),
-
-                stemmed_lookup_words=(
-                    lookup_stats["stemmed"]
-                ),
-
-                failed_lookup_words=(
-                    lookup_stats["failed"]
-                ),
-
+                failed_lookup_words=lookup_stats["failed"],
                 diagnostic_stats=diagnostic_stats,
                 word_diagnostics=word_diagnostics,
             )
@@ -1860,51 +1834,11 @@ class SemanticWordSubstitution(
                 eligible_words=len(eligible),
                 target_words=target_count,
                 valid_replacements=0,
-
-                direct_lookup_words=lookup_stats["direct"],
-                reverse_parent_lookup_words=lookup_stats["reverse_parent"],
-                stemmed_lookup_words=lookup_stats["stemmed"],
                 failed_lookup_words=lookup_stats["failed"],
-
                 diagnostic_stats=diagnostic_stats,
                 word_diagnostics=word_diagnostics,
             )
 
-        #if len(eligible) < target_count:
-        #    return self._infeasible_result(
-        #        text,
-        #        "INSUFFICIENT_ELIGIBLE_WORDS",
-        #
-        #        target_intensity=intensity,
-        #
-        #        total_words=len(words),
-        #
-        #        eligible_words=len(eligible),
-        #
-        #        target_words=target_count,
-        #
-        #        valid_replacements=0,
-        #
-        #        direct_lookup_words=(
-        #            lookup_stats["direct"]
-        #        ),
-        #
-        #        reverse_parent_lookup_words=(
-        #            lookup_stats["reverse_parent"]
-        #        ),
-        #
-        #        stemmed_lookup_words=(
-        #            lookup_stats["stemmed"]
-        #        ),
-        #
-        #        failed_lookup_words=(
-        #            lookup_stats["failed"]
-        #        ),
-        #
-        #        diagnostic_stats=diagnostic_stats,
-        #
-        #        word_diagnostics=word_diagnostics,
-        #    )
 
         # ---------------------------------------------------------------------
         # Shuffle eligible words so the selected positions vary while remaining
@@ -1996,21 +1930,8 @@ class SemanticWordSubstitution(
                 total_words=len(words),
                 eligible_words=len(eligible),
                 target_words=target_count,
-                valid_replacements=len(
-                    replacements
-                ),
-                direct_lookup_words=(
-                    lookup_stats["direct"]
-                ),
-                reverse_parent_lookup_words=(
-                    lookup_stats["reverse_parent"]
-                ),
-                stemmed_lookup_words=(
-                    lookup_stats["stemmed"]
-                ),
-                failed_lookup_words=(
-                    lookup_stats["failed"]
-                ),
+                valid_replacements=len(replacements),
+                failed_lookup_words=lookup_stats["failed"],
                 diagnostic_stats=diagnostic_stats,
                 word_diagnostics=word_diagnostics,
             )
@@ -2109,17 +2030,10 @@ class SemanticWordSubstitution(
 
             "perturbation_level": None,
 
-            "perturbation_rule": (
-                "semantic_similarity_based_word_substitution"
-            ),
-
             "target_intensity": intensity,
 
             "total_words": len(words),
 
-            "direct_lookup_words": lookup_stats["direct"],
-            "reverse_parent_lookup_words": lookup_stats["reverse_parent"],
-            "stemmed_lookup_words": lookup_stats["stemmed"],
             "failed_lookup_words": lookup_stats["failed"],
 
             "eligible_words": len(eligible),
@@ -2131,10 +2045,6 @@ class SemanticWordSubstitution(
             "eligible_shortage": (
                 len(eligible) < target_count
             ),
-            "eligible_shortage_count": max(
-                0,
-                target_count - len(eligible)
-            ),
             "feasibility_reason": (
                 "SUFFICIENT_ELIGIBLE_WORDS"
                 if len(eligible) >= target_count
@@ -2144,7 +2054,6 @@ class SemanticWordSubstitution(
             "words_changed": words_changed,
 
             "actual_ratio_all_words": actual_ratio_all_words,
-            "actual_ratio_eligible_words": actual_ratio_eligible,
 
             "diagnostic_stats": diagnostic_stats,
             "word_diagnostics": word_diagnostics,
@@ -2217,12 +2126,7 @@ class SemanticWordSubstitution(
         eligible_words: int = 0,
         target_words: int = 0,
         valid_replacements: int = 0,
-
-        direct_lookup_words: int = 0,
-        reverse_parent_lookup_words: int = 0,
-        stemmed_lookup_words: int = 0,
         failed_lookup_words: int = 0,
-
         diagnostic_stats: Optional[Dict[str, object]] = None,
         word_diagnostics: Optional[List[Dict[str, object]]] = None,
     ) -> Dict[str, object]:
@@ -2232,10 +2136,6 @@ class SemanticWordSubstitution(
             "perturbed_text": text,
 
             "perturbation_level": None,
-
-            "perturbation_rule": (
-                f"INFEASIBLE:{reason}"
-            ),
 
             "target_intensity": target_intensity,
 
@@ -2247,19 +2147,7 @@ class SemanticWordSubstitution(
 
             "words_changed": valid_replacements,
 
-            "direct_lookup_words": direct_lookup_words,
-
-            "reverse_parent_lookup_words": (
-                reverse_parent_lookup_words
-            ),
-
-            "stemmed_lookup_words": (
-                stemmed_lookup_words
-            ),
-
-            "failed_lookup_words": (
-                failed_lookup_words
-            ),
+            "failed_lookup_words": failed_lookup_words,
 
             # ============================================================
             # FEASIBILITY
@@ -2271,11 +2159,6 @@ class SemanticWordSubstitution(
 
             "eligible_shortage": (
                 eligible_words < target_words
-            ),
-
-            "eligible_shortage_count": max(
-                0,
-                target_words - eligible_words
             ),
 
             "feasibility_reason": reason,
@@ -2299,12 +2182,6 @@ class SemanticWordSubstitution(
             "actual_ratio_all_words": (
                 valid_replacements / total_words
                 if total_words > 0
-                else 0.0
-            ),
-
-            "actual_ratio_eligible_words": (
-                valid_replacements / eligible_words
-                if eligible_words > 0
                 else 0.0
             ),
 
@@ -2525,12 +2402,8 @@ class PerturbationEngine:
             "original_text",
             "perturbed_text",
             "perturbation_level",
-            "perturbation_rule",
             "target_intensity",
 
-            "direct_lookup_words",
-            "reverse_parent_lookup_words",
-            "stemmed_lookup_words",
             "failed_lookup_words",
 
             "total_words",
@@ -2539,7 +2412,6 @@ class PerturbationEngine:
             "words_changed",
 
             "actual_ratio_all_words",
-            "actual_ratio_eligible_words",
 
             "word_cosine_similarity_mean",
             "word_cosine_similarity_min",
@@ -2572,12 +2444,8 @@ class PerturbationEngine:
             & ~result_df["is_same_as_original"]
         )
 
-        successful_count = int(
-            successful.sum()
-        )
-
+        successful_count = int(successful.sum())
         total_count = len(result_df)
-
         success_percentage = (
             successful_count / total_count * 100
             if total_count
@@ -2587,68 +2455,28 @@ class PerturbationEngine:
         # -------------------------------------------------------------------------
         # DATASET-LEVEL PERTURBATION STATISTICS
         # -------------------------------------------------------------------------
-        # MOVE
+
         perturbation_stats = {
-            "total_samples": total_count,
-            "successful_samples": successful_count,
-            "changed_samples": int(
-                (
-                    ~result_df["is_same_as_original"]
-                ).sum()
-            ),
-
-            "sample_change_rate": float(
-                (
-                    ~result_df["is_same_as_original"]
-                ).mean()
-            ) if total_count else 0.0,
-
             "mean_word_change_rate": float(
-                result_df[
-                    "actual_ratio_all_words"
-                ].mean()
-            ) if total_count else 0.0,
-
-            "median_word_change_rate": float(
-                result_df[
-                    "actual_ratio_all_words"
-                ].median()
-            ) if total_count else 0.0,
-
-            "mean_eligible_word_change_rate": float(
-                result_df[
-                    "actual_ratio_eligible_words"
-                ].mean()
+                result_df["actual_ratio_all_words"].mean()
             ) if total_count else 0.0,
 
             "mean_word_cosine_similarity": float(
-                result_df[
-                    "word_cosine_similarity_mean"
-                ].dropna().mean()
+                result_df["word_cosine_similarity_mean"].dropna().mean()
             )
-            if result_df[
-                "word_cosine_similarity_mean"
-            ].notna().any()
+            if result_df["word_cosine_similarity_mean"].notna().any()
             else None,
 
             "min_word_cosine_similarity": float(
-                result_df[
-                    "word_cosine_similarity_min"
-                ].dropna().min()
+                result_df["word_cosine_similarity_min"].dropna().min()
             )
-            if result_df[
-                "word_cosine_similarity_min"
-            ].notna().any()
+            if result_df["word_cosine_similarity_min"].notna().any()
             else None,
 
             "max_word_cosine_similarity": float(
-                result_df[
-                    "word_cosine_similarity_max"
-                ].dropna().max()
+                result_df["word_cosine_similarity_max"].dropna().max()
             )
-            if result_df[
-                "word_cosine_similarity_max"
-            ].notna().any()
+            if result_df["word_cosine_similarity_max"].notna().any()
             else None,
         }
 
@@ -2691,14 +2519,6 @@ class PerturbationEngine:
             level.upper(),
             result_df[
                 "actual_ratio_all_words"
-            ].mean(),
-        )
-
-        logger.info(
-            "%s actual ratio over eligible words: %.4f",
-            level.upper(),
-            result_df[
-                "actual_ratio_eligible_words"
             ].mean(),
         )
 

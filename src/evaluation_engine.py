@@ -711,128 +711,6 @@ class PerturbationEvaluator:
 
         logger.info("PerturbationEvaluator initialized")
 
-    #def _calculate_perturbation_statistics(
-    #    self,
-    #    original_df: pd.DataFrame,
-    #    perturbed_df: pd.DataFrame
-    #) -> Dict[str, Any]:
-    #    """
-    #    Calculate actual perturbation change statistics.
-    #    """
-    #
-    #    original_texts = (
-    #        original_df['text'].astype(str).tolist()
-    #    )
-    #
-    #    perturbed_texts = (
-    #        perturbed_df['text'].astype(str).tolist()
-    #    )
-    #
-    #    if len(original_texts) != len(perturbed_texts):
-    #        raise ValueError(
-    #            "Original and perturbed datasets must have "
-    #            "the same number of samples."
-    #        )
-    #
-    #    changed_samples = 0
-    #    word_change_rates = []
-    #    char_change_rates = []
-    #
-    #    for original, perturbed in zip(
-    #        original_texts,
-    #        perturbed_texts
-    #    ):
-    #
-    #        if original != perturbed:
-    #            changed_samples += 1
-    #
-    #        original_words = original.split()
-    #        perturbed_words = perturbed.split()
-    #
-    #        # Position-based word changes
-    #        max_len = max(
-    #            len(original_words),
-    #            len(perturbed_words)
-    #        )
-    #
-    #        changed_words = sum(
-    #            1
-    #            for i in range(max_len)
-    #            if (
-    #                i >= len(original_words)
-    #                or i >= len(perturbed_words)
-    #                or original_words[i] != perturbed_words[i]
-    #            )
-    #        )
-    #
-    #        word_change_rate = (
-    #            changed_words / len(original_words)
-    #            if len(original_words) > 0
-    #            else 0.0
-    #        )
-    #
-    #        word_change_rates.append(word_change_rate)
-    #
-    #        # Character change rate
-    #        max_char_len = max(
-    #            len(original),
-    #            len(perturbed)
-    #        )
-    #
-    #        changed_chars = sum(
-    #            1
-    #            for i in range(max_char_len)
-    #            if (
-    #                i >= len(original)
-    #                or i >= len(perturbed)
-    #                or original[i] != perturbed[i]
-    #            )
-    #        )
-    #
-    #        char_change_rate = (
-    #            changed_chars / len(original)
-    #            if len(original) > 0
-    #            else 0.0
-    #        )
-    #
-    #        char_change_rates.append(char_change_rate)
-    #
-    #    total = len(original_texts)
-    #
-    #    return {
-    #        'total_samples': total,
-    #
-    #        'changed_samples': changed_samples,
-    #
-    #        'unchanged_samples': (
-    #            total - changed_samples
-    #        ),
-    #
-    #        'sample_change_rate': (
-    #            changed_samples / total
-    #            if total > 0
-    #            else 0.0
-    #        ),
-    #
-    #        'mean_word_change_rate': (
-    #            float(np.mean(word_change_rates))
-    #            if word_change_rates
-    #            else 0.0
-    #        ),
-    #
-    #        'median_word_change_rate': (
-    #            float(np.median(word_change_rates))
-    #            if word_change_rates
-    #            else 0.0
-    #        ),
-    #
-    #        'mean_char_change_rate': (
-    #            float(np.mean(char_change_rates))
-    #            if char_change_rates
-    #            else 0.0
-    #        )
-    #    }
-
     def evaluate_with_perturbation(
         self,
         test_df: pd.DataFrame,
@@ -860,45 +738,6 @@ class PerturbationEvaluator:
             text_column='text',
             level=perturbation_level
         )
-
-        ## ── debug: perturbation sample pairs ──────────────────────────────
-        #dbg_perturbation_samples(
-        #    level=perturbation_level,
-        #    domain=domain or "?",
-        #    originals=original_texts,
-        #    perturbed=perturbed_texts,
-        #)
-        #
-        ## ── debug: perturbation character/word change stats ──────────────
-        #import numpy as _np
-        #
-        #char_changes = [
-        #    sum(1 for a, b in zip(o, p) if a != b) / max(len(o), 1)
-        #    for o, p in zip(original_texts, perturbed_texts)
-        #]
-        #
-        #word_changes = [
-        #    len(
-        #        set(o.split()).symmetric_difference(
-        #            set(p.split())
-        #        )
-        #    ) / max(len(o.split()), 1)
-        #    for o, p in zip(original_texts, perturbed_texts)
-        #]
-        #
-        #dbg_perturbation_stats(
-        #    level=perturbation_level,
-        #    domain=domain or "?",
-        #    n_texts=len(perturbed_df),
-        #    char_change_mean=(
-        #        float(_np.mean(char_changes))
-        #        if char_changes else 0.0
-        #    ),
-        #    word_change_mean=(
-        #        float(_np.mean(word_changes))
-        #        if word_changes else 0.0
-        #    ),
-        #)
 
         # ---------------------------------------------------------------
         # Get predictions
@@ -1008,41 +847,11 @@ class PerturbationEvaluator:
         # Perturbation statistics
         # ------------------------------------------------------------
         perturbation_stats = {
-            'total_samples': len(perturbed_df),
-
-            'changed_samples': int(
-                (
-                    perturbed_df['is_same_as_original'] == False
-                ).sum()
-            ) if 'is_same_as_original' in perturbed_df.columns
-            else None,
-
-            'sample_change_rate': float(
-                (
-                    perturbed_df['is_same_as_original'] == False
-                ).mean()
-            ) if 'is_same_as_original' in perturbed_df.columns
-            else None,
-
             'mean_word_change_rate': float(
                 perturbed_df[
                     'actual_ratio_all_words'
                 ].mean()
             ) if 'actual_ratio_all_words' in perturbed_df.columns
-            else None,
-
-            'median_word_change_rate': float(
-                perturbed_df[
-                    'actual_ratio_all_words'
-                ].median()
-            ) if 'actual_ratio_all_words' in perturbed_df.columns
-            else None,
-
-            'mean_eligible_word_change_rate': float(
-                perturbed_df[
-                    'actual_ratio_eligible_words'
-                ].mean()
-            ) if 'actual_ratio_eligible_words' in perturbed_df.columns
             else None,
 
             'mean_word_cosine_similarity': float(
@@ -1653,9 +1462,6 @@ class EvaluationEngine:
 
         logger.info("Cross-domain perturbation evaluation complete")
 
-        # Save results
-        self.save_results(results, filename='cross_domain_perturbation_results.json')
-
         return results
 
     def aggregate_results(
@@ -1783,25 +1589,9 @@ class EvaluationEngine:
                                 'perturbation_statistics'
                             ]
                             row.update({
-                                'changed_samples':
-                                    stats.get(
-                                        'changed_samples'
-                                    ),
-                                'sample_change_rate':
-                                    stats.get(
-                                        'sample_change_rate'
-                                    ),
                                 'mean_word_change_rate':
                                     stats.get(
                                         'mean_word_change_rate'
-                                    ),
-                                'median_word_change_rate':
-                                    stats.get(
-                                        'median_word_change_rate'
-                                    ),
-                                'mean_eligible_word_change_rate':
-                                    stats.get(
-                                        'mean_eligible_word_change_rate'
                                     ),
                                 'mean_word_cosine_similarity':
                                     stats.get(
@@ -1939,25 +1729,9 @@ class EvaluationEngine:
                             ]
 
                             row.update({
-                                'changed_samples':
-                                    stats.get(
-                                        'changed_samples'
-                                    ),
-                                'sample_change_rate':
-                                    stats.get(
-                                        'sample_change_rate'
-                                    ),
                                 'mean_word_change_rate':
                                     stats.get(
                                         'mean_word_change_rate'
-                                    ),
-                                'median_word_change_rate':
-                                    stats.get(
-                                        'median_word_change_rate'
-                                    ),
-                                'mean_char_change_rate':
-                                    stats.get(
-                                        'mean_char_change_rate'
                                     ),
                                 'mean_word_cosine_similarity':
                                     stats.get(
