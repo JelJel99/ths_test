@@ -38,7 +38,11 @@ import numpy as np
 from config import config
 from data_manager import DataManager
 from model_trainer import ModelTrainer
-from evaluation_engine import EvaluationEngine
+from evaluation_engine import (
+    EvaluationEngine,
+    PERTURBATION_TYPES,
+    PERTURBATION_LEVELS,
+)
 from perturbation_engine import PerturbationEngine
 from statistical_analyzer import StatisticalAnalyzer
 from error_analyzer import ErrorAnalyzer, attach_texts_to_results

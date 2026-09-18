@@ -39,6 +39,27 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# PERTURBATION STRUCTURE CONSTANTS
+# =============================================================================
+#
+# The robustness experiment applies TWO perturbation mechanisms, each at three
+# intensity levels. The unperturbed data ('clean') is the shared baseline for
+# both mechanisms, so it lives once at the top of the structure rather than
+# under each type.
+#
+#   results['perturbation'][domain] = {
+#       'clean': {...},
+#       'semantic': {'low': {...}, 'medium': {...}, 'high': {...}},
+#       'typo':     {'low': {...}, 'medium': {...}, 'high': {...}},
+#   }
+#
+# These names drive every perturbation loop in the pipeline so there are no
+# hard-coded ['low','medium','high'] lists scattered around.
+PERTURBATION_TYPES = ['semantic', 'typo']
+PERTURBATION_LEVELS = ['low', 'medium', 'high']
+
+
 class MetricsCalculator:
     """
     Calculates performance metrics for clickbait detection.
@@ -1112,6 +1133,23 @@ class EvaluationEngine:
 
         logger.info("Generating all perturbations ONCE")
 
+        # We generate TWO independent perturbation types for every domain:
+        #
+        #   'semantic' -> synonym substitution  (engine levels: low/medium/high)
+        #   'typo'     -> character typos        (engine levels: typo_low/typo_medium/typo_high)
+        #
+        # The PerturbationEngine uses distinct level names per type. For the
+        # semantic type the engine level IS the short level ('low'); for the
+        # typo type it is prefixed ('typo_low'). We STORE every result under the
+        # short level name so the downstream structure is uniform:
+        #
+        #   perturbed_test_data[domain][ptype][level] = perturbed_df
+        #
+        # where ptype in PERTURBATION_TYPES and level in PERTURBATION_LEVELS.
+        def _engine_level(ptype: str, level: str) -> str:
+            """Map (type, short level) -> the level name the engine expects."""
+            return level if ptype == 'semantic' else f"{ptype}_{level}"
+
         perturbed_test_data = {}
 
         for domain, test_df in test_data.items():
@@ -1124,64 +1162,80 @@ class EvaluationEngine:
             )
             os.makedirs(domain_output_dir, exist_ok=True)
 
-            for level in ['low', 'medium', 'high']:
-                logger.info(
-                    f"  Generating {domain} - {level}"
-                )
+            # Loop over each perturbation type, then over its three levels.
+            for ptype in PERTURBATION_TYPES:
 
-                perturbed_df = self.perturbation_engine.apply_to_dataframe(
-                    test_df.copy(),
-                    text_column='text',
-                    level=level
-                )
+                perturbed_test_data[domain][ptype] = {}
 
-                # ============================================================
-                # DEFINE FINAL PERTURBATION SUCCESS
-                # ============================================================
-
-                if (
-                    'is_same_as_original' not in perturbed_df.columns
-                    or 'perturbation_in_range' not in perturbed_df.columns
-                ):
-                    raise ValueError(
-                        "Required perturbation validation columns are missing: "
-                        "'is_same_as_original' and/or 'perturbation_in_range'."
+                for level in PERTURBATION_LEVELS:
+                    engine_level = _engine_level(ptype, level)
+                    logger.info(
+                        f"  Generating {domain} - {ptype} - {level} "
+                        f"(engine level '{engine_level}')"
                     )
 
-                perturbed_df['perturbation_success'] = (
-                    (~perturbed_df['is_same_as_original'].astype(bool))
-                    & perturbed_df['perturbation_in_range'].astype(bool)
-                )
+                    perturbed_df = self.perturbation_engine.apply_to_dataframe(
+                        test_df.copy(),
+                        text_column='text',
+                        level=engine_level
+                    )
 
-                # ============================================================
-                # DEBUG
-                # ============================================================
+                    # ====================================================
+                    # DEFINE FINAL PERTURBATION SUCCESS
+                    # ====================================================
 
-                print("\nperturbation_success:")
-                print(
-                    perturbed_df['perturbation_success']
-                    .value_counts(dropna=False)
-                )
+                    if (
+                        'is_same_as_original' not in perturbed_df.columns
+                        or 'perturbation_in_range' not in perturbed_df.columns
+                    ):
+                        raise ValueError(
+                            "Required perturbation validation columns are missing: "
+                            "'is_same_as_original' and/or 'perturbation_in_range'."
+                        )
 
-                # ============================================================
-                # STORE
-                # ============================================================
+                    perturbed_df['perturbation_success'] = (
+                        (~perturbed_df['is_same_as_original'].astype(bool))
+                        & perturbed_df['perturbation_in_range'].astype(bool)
+                    )
 
-                perturbed_test_data[domain][level] = perturbed_df
+                    # Tag each row with its perturbation type so later analysis
+                    # can separate semantic from typo rows.
+                    perturbed_df['perturbation_type'] = ptype
 
-                output_path = os.path.join(
-                    domain_output_dir,
-                    f"{level}.csv"
-                )
+                    # ====================================================
+                    # DEBUG
+                    # ====================================================
 
-                perturbed_df.to_csv(
-                    output_path,
-                    index=False
-                )
+                    print(f"\nperturbation_success ({ptype} - {level}):")
+                    print(
+                        perturbed_df['perturbation_success']
+                        .value_counts(dropna=False)
+                    )
 
-                logger.info(
-                    f"  Saved: {output_path}"
-                )
+                    # ====================================================
+                    # STORE
+                    # ====================================================
+
+                    perturbed_test_data[domain][ptype][level] = perturbed_df
+
+                    # Save to <domain>/<ptype>/<level>.csv so the two types do
+                    # not overwrite each other on disk.
+                    type_output_dir = os.path.join(domain_output_dir, ptype)
+                    os.makedirs(type_output_dir, exist_ok=True)
+
+                    output_path = os.path.join(
+                        type_output_dir,
+                        f"{level}.csv"
+                    )
+
+                    perturbed_df.to_csv(
+                        output_path,
+                        index=False
+                    )
+
+                    logger.info(
+                        f"  Saved: {output_path}"
+                    )
 
         logger.info("All perturbations generated and saved successfully")
 
@@ -1281,21 +1335,28 @@ class EvaluationEngine:
                     perturbation_output_dir=self.perturbation_output_dir
                 )
                 clean_results = results['in_domain'][domain]
-                results['perturbation'][domain] = {
-                    'clean': clean_results
-                }
-                for level in ['low', 'medium', 'high']:
-                    perturbed_df = (
-                        perturbed_test_data[domain][level]
-                    )
-                    results['perturbation'][domain][level] = (
-                        evaluator.evaluate_existing_perturbation(
-                            perturbed_df=perturbed_df,
-                            clean_results=clean_results,
-                            perturbation_level=level,
-                            domain=domain
+
+                # Shared clean baseline sits once at the top; the two
+                # perturbation types each get their own low/medium/high branch.
+                domain_perturbation = {'clean': clean_results}
+
+                for ptype in PERTURBATION_TYPES:
+                    domain_perturbation[ptype] = {}
+
+                    for level in PERTURBATION_LEVELS:
+                        perturbed_df = (
+                            perturbed_test_data[domain][ptype][level]
                         )
-                    )
+                        domain_perturbation[ptype][level] = (
+                            evaluator.evaluate_existing_perturbation(
+                                perturbed_df=perturbed_df,
+                                clean_results=clean_results,
+                                perturbation_level=level,
+                                domain=domain
+                            )
+                        )
+
+                results['perturbation'][domain] = domain_perturbation
         # ============================================================
         # PHASE 5 — CROSS-DOMAIN PERTURBATION
         # ============================================================
@@ -1342,7 +1403,6 @@ class EvaluationEngine:
         }
 
         domains = list(test_data.keys())
-        perturbation_levels = ['clean', 'low', 'medium', 'high']
 
         for source_domain in domains:
             if source_domain not in self.model_trainers:
@@ -1355,114 +1415,205 @@ class EvaluationEngine:
                     continue
 
                 key = f"{source_domain}_to_{target_domain}"
+
+                # Mirror the in-domain structure: a shared 'clean' baseline,
+                # then a 'semantic' and a 'typo' branch each with low/medium/high.
                 results['cross_domain_perturbation'][key] = {}
+                for ptype in PERTURBATION_TYPES:
+                    results['cross_domain_perturbation'][key][ptype] = {}
 
                 target_df = test_data[target_domain]
 
-                # Evaluate on clean data
+                # Evaluate on clean data (shared baseline for both types)
                 y_true = target_df['label'].values
                 y_pred, y_proba = model_trainer.predict(target_df['text'].tolist())
                 clean_metrics = self.metrics_calculator.calculate_metrics(
                     y_true, y_pred, y_proba
                 )
+                clean_predictions = y_pred.tolist()
                 results['cross_domain_perturbation'][key]['clean'] = {
                     'metrics': clean_metrics,
-                    'predictions': y_pred.tolist(),
+                    'predictions': clean_predictions,
                     'probabilities': y_proba.tolist(),
                     'true_labels': y_true.tolist()
                 }
 
-                # Evaluate with perturbations
-                for level in ['low', 'medium', 'high']:
+                # Evaluate with perturbations, once per type and level.
+                for ptype in PERTURBATION_TYPES:
+                    for level in PERTURBATION_LEVELS:
 
-                    # Reuse the already-generated perturbation
-                    perturbed_df = perturbed_test_data[target_domain][level]
-                    perturbation_stats = perturbed_df.attrs.get(
-                        'perturbation_stats',
-                        {}
-                    )
-
-                    similarities = perturbed_df.attrs.get(
-                        'replacement_similarities',
-                        []
-                    )
-
-                    if similarities:
-                        similarity_statistics = {
-                            'count': len(similarities),
-                            'mean': float(np.mean(similarities)),
-                            'median': float(np.median(similarities)),
-                            'std': float(np.std(similarities)),
-                            'min': float(np.min(similarities)),
-                            'max': float(np.max(similarities))
-                        }
-                    else:
-                        similarity_statistics = {
-                            'count': 0,
-                            'mean': None,
-                            'median': None,
-                            'std': None,
-                            'min': None,
-                            'max': None
-                        }
-
-                    perturbation_statistics = {
-                        **perturbation_stats,
-                        'semantic_similarity': similarity_statistics
-                    }
-
-                    y_true = perturbed_df['label'].values
-                    y_pred, y_proba = model_trainer.predict(
-                        perturbed_df['text'].tolist()
-                    )
-                    perturbed_metrics = self.metrics_calculator.calculate_metrics(
-                        y_true, y_pred, y_proba
-                    )
-
-                    # Calculate robustness metrics
-                    robustness = self.metrics_calculator.calculate_robustness_metrics(
-                        clean_metrics,
-                        perturbed_metrics
-                    )
-
-                    if 'perturbation_success' not in perturbed_df.columns:
-                        raise ValueError(
-                            f"Missing 'perturbation_success' for "
-                            f"{target_domain} - {level}"
+                        # Reuse the already-generated perturbation
+                        perturbed_df = perturbed_test_data[target_domain][ptype][level]
+                        perturbation_stats = perturbed_df.attrs.get(
+                            'perturbation_stats',
+                            {}
                         )
 
-                    prediction_flip = self.metrics_calculator.calculate_prediction_flip(
-                        clean_predictions=(
-                            results['cross_domain_perturbation'][key]['clean']['predictions']
-                        ),
-                        perturbed_predictions=y_pred.tolist(),
-                        true_labels=y_true.tolist(),
-                        successful_perturbations=(
-                            perturbed_df['perturbation_success'].tolist()
-                            if 'perturbation_success' in perturbed_df.columns
-                            else None
+                        similarities = perturbed_df.attrs.get(
+                            'replacement_similarities',
+                            []
                         )
-                    )
 
-                    results['cross_domain_perturbation'][key][level] = {
-                        'metrics': perturbed_metrics,
-                        'robustness_metrics': robustness,
-                        'prediction_flip': prediction_flip,
-                        'perturbation_statistics':
-                            perturbation_statistics,
-                        'predictions': y_pred.tolist(),
-                        'probabilities': y_proba.tolist(),
-                        'true_labels': y_true.tolist()
-                    }
+                        if similarities:
+                            similarity_statistics = {
+                                'count': len(similarities),
+                                'mean': float(np.mean(similarities)),
+                                'median': float(np.median(similarities)),
+                                'std': float(np.std(similarities)),
+                                'min': float(np.min(similarities)),
+                                'max': float(np.max(similarities))
+                            }
+                        else:
+                            similarity_statistics = {
+                                'count': 0,
+                                'mean': None,
+                                'median': None,
+                                'std': None,
+                                'min': None,
+                                'max': None
+                            }
 
-                    logger.info(
-                        f"{source_domain} -> {target_domain} ({level}): "
-                        f"Macro-F1={perturbed_metrics['macro_f1']:.4f}"
-                    )
+                        perturbation_statistics = {
+                            **perturbation_stats,
+                            'semantic_similarity': similarity_statistics
+                        }
+
+                        y_true = perturbed_df['label'].values
+                        y_pred, y_proba = model_trainer.predict(
+                            perturbed_df['text'].tolist()
+                        )
+                        perturbed_metrics = self.metrics_calculator.calculate_metrics(
+                            y_true, y_pred, y_proba
+                        )
+
+                        # Calculate robustness metrics
+                        robustness = self.metrics_calculator.calculate_robustness_metrics(
+                            clean_metrics,
+                            perturbed_metrics
+                        )
+
+                        if 'perturbation_success' not in perturbed_df.columns:
+                            raise ValueError(
+                                f"Missing 'perturbation_success' for "
+                                f"{target_domain} - {ptype} - {level}"
+                            )
+
+                        prediction_flip = self.metrics_calculator.calculate_prediction_flip(
+                            clean_predictions=clean_predictions,
+                            perturbed_predictions=y_pred.tolist(),
+                            true_labels=y_true.tolist(),
+                            successful_perturbations=(
+                                perturbed_df['perturbation_success'].tolist()
+                                if 'perturbation_success' in perturbed_df.columns
+                                else None
+                            )
+                        )
+
+                        results['cross_domain_perturbation'][key][ptype][level] = {
+                            'metrics': perturbed_metrics,
+                            'robustness_metrics': robustness,
+                            'prediction_flip': prediction_flip,
+                            'perturbation_statistics':
+                                perturbation_statistics,
+                            'predictions': y_pred.tolist(),
+                            'probabilities': y_proba.tolist(),
+                            'true_labels': y_true.tolist()
+                        }
+
+                        logger.info(
+                            f"{source_domain} -> {target_domain} "
+                            f"({ptype} - {level}): "
+                            f"Macro-F1={perturbed_metrics['macro_f1']:.4f}"
+                        )
 
         logger.info("Cross-domain perturbation evaluation complete")
 
         return results
+
+    @staticmethod
+    def _build_perturbation_row(
+        evaluation_type: str,
+        source_domain: str,
+        target_domain: str,
+        perturbation_type: str,
+        perturbation_level: str,
+        level_results: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Build one aggregated CSV row for a single perturbed condition.
+
+        This is shared by both the in-domain perturbation rows and the
+        cross-domain perturbation rows so the (identical) metric/robustness/
+        flip/similarity extraction lives in one place instead of being
+        duplicated. The 'perturbation_type' column keeps semantic and typo
+        rows distinguishable in the flat CSV.
+        """
+        row = {
+            'evaluation_type': evaluation_type,
+            'source_domain': source_domain,
+            'target_domain': target_domain,
+            'perturbation_type': perturbation_type,
+            'perturbation_level': perturbation_level,
+            **level_results['metrics'],
+        }
+
+        if 'robustness_metrics' in level_results:
+            row.update(level_results['robustness_metrics'])
+
+        if 'prediction_flip' in level_results:
+            flip = level_results['prediction_flip']
+            row.update({
+                'flip_count': flip['flip_count'],
+                'flip_rate': flip['flip_rate'],
+                'flip_rate_pct': flip['flip_rate_pct'],
+                'flip_0_to_1_count': flip['flip_0_to_1_count'],
+                'flip_1_to_0_count': flip['flip_1_to_0_count'],
+                'correct_to_incorrect':
+                    flip['flips']['correct_to_incorrect'],
+                'incorrect_to_correct':
+                    flip['flips']['incorrect_to_correct'],
+                'correct_to_incorrect_rate':
+                    flip['flips']['correct_to_incorrect_rate'],
+                'incorrect_to_correct_rate':
+                    flip['flips']['incorrect_to_correct_rate'],
+                'successful_perturbations':
+                    flip.get('successful_perturbations'),
+                'successful_perturbation_rate':
+                    flip.get('successful_perturbation_rate'),
+                'successful_perturbation_rate_pct':
+                    flip.get('successful_perturbation_rate_pct'),
+                'flip_count_successful_only':
+                    flip.get('flip_count_successful_only'),
+                'flip_rate_successful_only':
+                    flip.get('flip_rate_successful_only'),
+                'flip_rate_successful_only_pct':
+                    flip.get('flip_rate_successful_only_pct'),
+            })
+
+        if 'perturbation_statistics' in level_results:
+            stats = level_results['perturbation_statistics']
+            row.update({
+                'mean_word_change_rate':
+                    stats.get('mean_word_change_rate'),
+                'mean_word_cosine_similarity':
+                    stats.get('mean_word_cosine_similarity'),
+                'min_word_cosine_similarity':
+                    stats.get('min_word_cosine_similarity'),
+                'max_word_cosine_similarity':
+                    stats.get('max_word_cosine_similarity'),
+            })
+
+            semantic_similarity = stats.get('semantic_similarity', {})
+            row.update({
+                'similarity_count': semantic_similarity.get('count'),
+                'similarity_mean': semantic_similarity.get('mean'),
+                'similarity_median': semantic_similarity.get('median'),
+                'similarity_std': semantic_similarity.get('std'),
+                'similarity_min': semantic_similarity.get('min'),
+                'similarity_max': semantic_similarity.get('max'),
+            })
+
+        return row
 
     def aggregate_results(
         self,
@@ -1508,9 +1659,15 @@ class EvaluationEngine:
                     row.update(domain_results['domain_shift'])
                 rows.append(row)
 
-        # Perturbation results
+        # Perturbation results (in-domain).
+        # Structure: results['perturbation'][domain] = {
+        #     'clean': {...}, 'semantic': {low,medium,high}, 'typo': {low,medium,high}
+        # }
+        # We emit one row per (domain, type, level). The 'clean' baseline is
+        # already captured by the in-domain rows above, so it is skipped here.
         if 'perturbation' in results:
             for domain, pert_results in results['perturbation'].items():
+<<<<<<< Updated upstream
                 for level, level_results in pert_results.items():
                     if level != 'clean':
                         row = {
@@ -1638,70 +1795,46 @@ class EvaluationEngine:
                                     ),
                             })
 
+=======
+                for ptype in PERTURBATION_TYPES:
+                    type_results = pert_results.get(ptype, {})
+                    for level in PERTURBATION_LEVELS:
+                        if level not in type_results:
+                            continue
+                        row = self._build_perturbation_row(
+                            evaluation_type='perturbation',
+                            source_domain=domain,
+                            target_domain=domain,
+                            perturbation_type=ptype,
+                            perturbation_level=level,
+                            level_results=type_results[level],
+                        )
+>>>>>>> Stashed changes
                         rows.append(row)
 
-        # Cross-domain perturbation results
+        # Cross-domain perturbation results.
+        # Structure: results['cross_domain_perturbation'][key] = {
+        #     'clean': {...}, 'semantic': {low,medium,high}, 'typo': {low,medium,high}
+        # }
+        # We emit the 'clean' baseline row once, then one row per (type, level).
         if 'cross_domain_perturbation' in results:
-            for key, domain_results in (
+            for key, key_results in (
                 results['cross_domain_perturbation'].items()
             ):
                 source, target = key.split('_to_', 1)
 
-                for level, level_results in domain_results.items():
-                    metrics = level_results['metrics']
-                    row = {
-                        'evaluation_type':
-                            'cross_domain_perturbation',
+                # Clean baseline row (metrics only; no robustness/flip stats).
+                if 'clean' in key_results:
+                    rows.append({
+                        'evaluation_type': 'cross_domain_perturbation',
                         'source_domain': source,
                         'target_domain': target,
-                        'perturbation_level': level,
-                        **metrics
-                    }
-                    if level != 'clean':
-                        if 'robustness_metrics' in level_results:
-                            row.update(
-                                level_results['robustness_metrics']
-                            )
-                        if 'prediction_flip' in level_results:
-                            flip = level_results[
-                                'prediction_flip'
-                            ]
-                            row.update({
-                                'flip_count':
-                                    flip['flip_count'],
-                                'flip_rate':
-                                    flip['flip_rate'],
-                                'flip_rate_pct':
-                                    flip['flip_rate_pct'],
-                                'flip_0_to_1_count':
-                                    flip['flip_0_to_1_count'],
-                                'flip_1_to_0_count':
-                                    flip['flip_1_to_0_count'],
-                                'correct_to_incorrect':
-                                    flip['flips'][
-                                        'correct_to_incorrect'
-                                    ],
-                                'incorrect_to_correct':
-                                    flip['flips'][
-                                        'incorrect_to_correct'
-                                    ],
-                                'correct_to_incorrect_rate':
-                                    flip['flips'][
-                                        'correct_to_incorrect_rate'
-                                    ],
-                                'incorrect_to_correct_rate':
-                                    flip['flips'][
-                                        'incorrect_to_correct_rate'
-                                    ],
-                                'successful_perturbations':
-                                    flip[
-                                        'successful_perturbations'
-                                    ],
-                                'successful_perturbation_rate':
-                                    flip.get(
-                                        'successful_perturbation_rate'
-                                    ),
+                        'perturbation_type': 'clean',
+                        'perturbation_level': 'clean',
+                        **key_results['clean']['metrics']
+                    })
 
+<<<<<<< Updated upstream
                                 'successful_perturbation_rate_pct':
                                     flip.get(
                                         'successful_perturbation_rate_pct'
@@ -1789,6 +1922,22 @@ class EvaluationEngine:
                             })
 
                     rows.append(row)
+=======
+                for ptype in PERTURBATION_TYPES:
+                    type_results = key_results.get(ptype, {})
+                    for level in PERTURBATION_LEVELS:
+                        if level not in type_results:
+                            continue
+                        row = self._build_perturbation_row(
+                            evaluation_type='cross_domain_perturbation',
+                            source_domain=source,
+                            target_domain=target,
+                            perturbation_type=ptype,
+                            perturbation_level=level,
+                            level_results=type_results[level],
+                        )
+                        rows.append(row)
+>>>>>>> Stashed changes
 
         df = pd.DataFrame(rows)
 
@@ -1874,18 +2023,32 @@ class EvaluationEngine:
             report_lines.append("-" * 80)
             for domain, pert_results in results['perturbation'].items():
                 report_lines.append(f"  {domain}:")
-                for level in ['clean', 'low', 'medium', 'high']:
-                    if level in pert_results:
-                        metrics = pert_results[level]['metrics']
-                        macro_f1 = metrics['macro_f1']
-                        report_lines.append(f"    {level.capitalize()}: Macro-F1={macro_f1:.4f}")
 
-                        if level != 'clean' and 'robustness_metrics' in pert_results[level]:
-                            rob = pert_results[level]['robustness_metrics']
+                # Shared clean baseline first.
+                if 'clean' in pert_results:
+                    clean_f1 = pert_results['clean']['metrics']['macro_f1']
+                    report_lines.append(f"    Clean: Macro-F1={clean_f1:.4f}")
+
+                # Then each perturbation type with its three levels.
+                for ptype in PERTURBATION_TYPES:
+                    type_results = pert_results.get(ptype, {})
+                    if not type_results:
+                        continue
+                    report_lines.append(f"    [{ptype}]")
+                    for level in PERTURBATION_LEVELS:
+                        if level not in type_results:
+                            continue
+                        level_results = type_results[level]
+                        macro_f1 = level_results['metrics']['macro_f1']
+                        report_lines.append(
+                            f"      {level.capitalize()}: Macro-F1={macro_f1:.4f}"
+                        )
+                        if 'robustness_metrics' in level_results:
+                            rob = level_results['robustness_metrics']
                             drop = rob.get('macro_f1_drop', 0)
                             drop_pct = rob.get('macro_f1_drop_pct', 0)
                             report_lines.append(
-                                f"      Drop: {drop:.4f} ({drop_pct:.2f}%)"
+                                f"        Drop: {drop:.4f} ({drop_pct:.2f}%)"
                             )
                 report_lines.append("")
 
