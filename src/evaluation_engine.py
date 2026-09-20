@@ -875,39 +875,39 @@ class PerturbationEvaluator:
             ) if 'actual_ratio_all_words' in perturbed_df.columns
             else None,
 
-            'mean_word_cosine_similarity': float(
+            'mean_similarity_score': float(
                 perturbed_df[
-                    'word_cosine_similarity_mean'
+                    'similarity_score_mean'
                 ].dropna().mean()
             ) if (
-                'word_cosine_similarity_mean'
+                'similarity_score_mean'
                 in perturbed_df.columns
                 and perturbed_df[
-                    'word_cosine_similarity_mean'
+                    'similarity_score_mean'
                 ].notna().any()
             ) else None,
 
-            'min_word_cosine_similarity': float(
+            'min_similarity_score': float(
                 perturbed_df[
-                    'word_cosine_similarity_min'
+                    'similarity_score_min'
                 ].dropna().min()
             ) if (
-                'word_cosine_similarity_min'
+                'similarity_score_min'
                 in perturbed_df.columns
                 and perturbed_df[
-                    'word_cosine_similarity_min'
+                    'similarity_score_min'
                 ].notna().any()
             ) else None,
 
-            'max_word_cosine_similarity': float(
+            'max_similarity_score': float(
                 perturbed_df[
-                    'word_cosine_similarity_max'
+                    'similarity_score_max'
                 ].dropna().max()
             ) if (
-                'word_cosine_similarity_max'
+                'similarity_score_max'
                 in perturbed_df.columns
                 and perturbed_df[
-                    'word_cosine_similarity_max'
+                    'similarity_score_max'
                 ].notna().any()
             ) else None,
         }
@@ -1595,12 +1595,12 @@ class EvaluationEngine:
             row.update({
                 'mean_word_change_rate':
                     stats.get('mean_word_change_rate'),
-                'mean_word_cosine_similarity':
-                    stats.get('mean_word_cosine_similarity'),
-                'min_word_cosine_similarity':
-                    stats.get('min_word_cosine_similarity'),
-                'max_word_cosine_similarity':
-                    stats.get('max_word_cosine_similarity'),
+                'mean_similarity_score':
+                    stats.get('mean_similarity_score'),
+                'min_similarity_score':
+                    stats.get('min_similarity_score'),
+                'max_similarity_score':
+                    stats.get('max_similarity_score'),
             })
 
             semantic_similarity = stats.get('semantic_similarity', {})
@@ -1667,135 +1667,6 @@ class EvaluationEngine:
         # already captured by the in-domain rows above, so it is skipped here.
         if 'perturbation' in results:
             for domain, pert_results in results['perturbation'].items():
-<<<<<<< Updated upstream
-                for level, level_results in pert_results.items():
-                    if level != 'clean':
-                        row = {
-                            'evaluation_type': 'perturbation',
-                            'source_domain': domain,
-                            'target_domain': domain,
-                            'perturbation_level': level,
-                            **level_results['metrics']
-                        }
-                        if 'robustness_metrics' in level_results:
-                            row.update(level_results['robustness_metrics'])
-                        if 'prediction_flip' in level_results:
-                            flip = level_results['prediction_flip']
-                            row.update({
-                                'flip_count':
-                                    flip['flip_count'],
-
-                                'flip_rate':
-                                    flip['flip_rate'],
-
-                                'flip_rate_pct':
-                                    flip['flip_rate_pct'],
-
-                                'flip_0_to_1_count':
-                                    flip['flip_0_to_1_count'],
-
-                                'flip_1_to_0_count':
-                                    flip['flip_1_to_0_count'],
-
-                                'correct_to_incorrect':
-                                    flip['flips']['correct_to_incorrect'],
-
-                                'incorrect_to_correct':
-                                    flip['flips']['incorrect_to_correct'],
-
-                                'correct_to_incorrect_rate':
-                                    flip['flips']['correct_to_incorrect_rate'],
-
-                                'incorrect_to_correct_rate':
-                                    flip['flips']['incorrect_to_correct_rate'],
-
-                                # Successful perturbation analysis
-                                'successful_perturbations':
-                                    flip.get(
-                                        'successful_perturbations'
-                                    ),
-
-                                'successful_perturbation_rate':
-                                    flip.get(
-                                        'successful_perturbation_rate'
-                                    ),
-
-                                'successful_perturbation_rate_pct':
-                                    flip.get(
-                                        'successful_perturbation_rate_pct'
-                                    ),
-
-                                'flip_count_successful_only':
-                                    flip.get(
-                                        'flip_count_successful_only'
-                                    ),
-
-                                'flip_rate_successful_only':
-                                    flip.get(
-                                        'flip_rate_successful_only'
-                                    ),
-
-                                'flip_rate_successful_only_pct':
-                                    flip.get(
-                                        'flip_rate_successful_only_pct'
-                                    ),
-                            })
-
-                        if 'perturbation_statistics' in level_results:
-                            stats = level_results[
-                                'perturbation_statistics'
-                            ]
-                            row.update({
-                                'mean_word_change_rate':
-                                    stats.get(
-                                        'mean_word_change_rate'
-                                    ),
-                                'mean_word_cosine_similarity':
-                                    stats.get(
-                                        'mean_word_cosine_similarity'
-                                    ),
-                                'min_word_cosine_similarity':
-                                    stats.get(
-                                        'min_word_cosine_similarity'
-                                    ),
-                                'max_word_cosine_similarity':
-                                    stats.get(
-                                        'max_word_cosine_similarity'
-                                    ),
-                            })
-
-                            semantic_similarity = stats.get(
-                                'semantic_similarity',
-                                {}
-                            )
-                            row.update({
-                                'similarity_count':
-                                    semantic_similarity.get(
-                                        'count'
-                                    ),
-                                'similarity_mean':
-                                    semantic_similarity.get(
-                                        'mean'
-                                    ),
-                                'similarity_median':
-                                    semantic_similarity.get(
-                                        'median'
-                                    ),
-                                'similarity_std':
-                                    semantic_similarity.get(
-                                        'std'
-                                    ),
-                                'similarity_min':
-                                    semantic_similarity.get(
-                                        'min'
-                                    ),
-                                'similarity_max':
-                                    semantic_similarity.get(
-                                        'max'
-                                    ),
-                            })
-
-=======
                 for ptype in PERTURBATION_TYPES:
                     type_results = pert_results.get(ptype, {})
                     for level in PERTURBATION_LEVELS:
@@ -1809,7 +1680,6 @@ class EvaluationEngine:
                             perturbation_level=level,
                             level_results=type_results[level],
                         )
->>>>>>> Stashed changes
                         rows.append(row)
 
         # Cross-domain perturbation results.
@@ -1834,95 +1704,6 @@ class EvaluationEngine:
                         **key_results['clean']['metrics']
                     })
 
-<<<<<<< Updated upstream
-                                'successful_perturbation_rate_pct':
-                                    flip.get(
-                                        'successful_perturbation_rate_pct'
-                                    ),
-
-                                'flip_count_successful_only':
-                                    flip.get(
-                                        'flip_count_successful_only'
-                                    ),
-
-                                'flip_rate_successful_only':
-                                    flip.get(
-                                        'flip_rate_successful_only'
-                                    ),
-
-                                'flip_rate_successful_only_pct':
-                                    flip.get(
-                                        'flip_rate_successful_only_pct'
-                                    ),
-                            })
-
-                        if 'perturbation_statistics' in level_results:
-                            stats = level_results[
-                                'perturbation_statistics'
-                            ]
-
-                            row.update({
-                                'mean_word_change_rate':
-                                    stats.get(
-                                        'mean_word_change_rate'
-                                    ),
-                                'mean_word_cosine_similarity':
-                                    stats.get(
-                                        'mean_word_cosine_similarity'
-                                    ),
-                                'min_word_cosine_similarity':
-                                    stats.get(
-                                        'min_word_cosine_similarity'
-                                    ),
-                                'max_word_cosine_similarity':
-                                    stats.get(
-                                        'max_word_cosine_similarity'
-                                    ),
-                            })
-
-                            # ----------------------------------------------------
-                            # Semantic similarity distribution
-                            # ----------------------------------------------------
-
-                            semantic_similarity = stats.get(
-                                'semantic_similarity',
-                                {}
-                            )
-
-                            row.update({
-                                'similarity_count':
-                                    semantic_similarity.get(
-                                        'count'
-                                    ),
-
-                                'similarity_mean':
-                                    semantic_similarity.get(
-                                        'mean'
-                                    ),
-
-                                'similarity_median':
-                                    semantic_similarity.get(
-                                        'median'
-                                    ),
-
-                                'similarity_std':
-                                    semantic_similarity.get(
-                                        'std'
-                                    ),
-
-                                'similarity_min':
-                                    semantic_similarity.get(
-                                        'min'
-                                    ),
-
-                                'similarity_max':
-                                    semantic_similarity.get(
-                                        'max'
-                                    ),
-                            })
-
-                    rows.append(row)
-=======
                 for ptype in PERTURBATION_TYPES:
                     type_results = key_results.get(ptype, {})
                     for level in PERTURBATION_LEVELS:
@@ -1937,7 +1718,6 @@ class EvaluationEngine:
                             level_results=type_results[level],
                         )
                         rows.append(row)
->>>>>>> Stashed changes
 
         df = pd.DataFrame(rows)
 

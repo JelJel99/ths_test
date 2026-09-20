@@ -708,9 +708,9 @@ class TestPerturbationEngine(unittest.TestCase):
                 "is_same_as_original": result_text == text,
                 "similarity_in_range": True,
                 "perturbation_in_range": words_changed == n_change,
-                "word_cosine_similarity_mean": 0.88,
-                "word_cosine_similarity_min": 0.88,
-                "word_cosine_similarity_max": 0.88,
+                "similarity_score_mean": 0.88,
+                "similarity_score_min": 0.88,
+                "similarity_score_max": 0.88,
                 "replacements": replacements,
             }
 
@@ -1009,9 +1009,9 @@ def _make_stub_perturbation_result(text: str, intensity: float) -> dict:
         "is_same_as_original": True,
         "similarity_in_range": False,
         "perturbation_in_range": False,
-        "word_cosine_similarity_mean": float("nan"),
-        "word_cosine_similarity_min": float("nan"),
-        "word_cosine_similarity_max": float("nan"),
+        "similarity_score_mean": float("nan"),
+        "similarity_score_min": float("nan"),
+        "similarity_score_max": float("nan"),
         "replacements": [],
     }
 

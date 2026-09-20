@@ -2196,9 +2196,12 @@ class SemanticWordSubstitution(
                 words_changed == target_count
             ),
 
-            "word_cosine_similarity_mean": similarity_mean,
-            "word_cosine_similarity_min": similarity_min,
-            "word_cosine_similarity_max": similarity_max,
+            # Neutral, type-agnostic names: for the semantic mechanism this is
+            # the per-word contextual cosine; for typo it is the whole-text
+            # character TF-IDF cosine. The name no longer implies "word".
+            "similarity_score_mean": similarity_mean,
+            "similarity_score_min": similarity_min,
+            "similarity_score_max": similarity_max,
             "replacements": replacements,
         }
 
@@ -2321,11 +2324,11 @@ class SemanticWordSubstitution(
 
             "perturbation_in_range": False,
 
-            "word_cosine_similarity_mean": np.nan,
+            "similarity_score_mean": np.nan,
 
-            "word_cosine_similarity_min": np.nan,
+            "similarity_score_min": np.nan,
 
-            "word_cosine_similarity_max": np.nan,
+            "similarity_score_max": np.nan,
 
             "replacements": [],
         }
@@ -2645,9 +2648,9 @@ class TypoCharacterPerturbation(BasePerturbation):
             # read them. For a typo the meaningful similarity is the character
             # TF-IDF cosine, so we mirror it here (mean == min == max, since a
             # typo produces a single whole-text similarity, not per-word ones).
-            "word_cosine_similarity_mean": similarity,
-            "word_cosine_similarity_min": similarity,
-            "word_cosine_similarity_max": similarity,
+            "similarity_score_mean": similarity,
+            "similarity_score_min": similarity,
+            "similarity_score_max": similarity,
 
             "is_same_as_original": original == perturbed,
 
@@ -2693,9 +2696,9 @@ class TypoCharacterPerturbation(BasePerturbation):
             "diagnostic_stats": {},
             "word_diagnostics": [],
             "replacements": [],
-            "word_cosine_similarity_mean": np.nan,
-            "word_cosine_similarity_min": np.nan,
-            "word_cosine_similarity_max": np.nan,
+            "similarity_score_mean": np.nan,
+            "similarity_score_min": np.nan,
+            "similarity_score_max": np.nan,
             "is_same_as_original": True,
             "similarity_in_range": False,
             "perturbation_in_range": False,
@@ -2730,7 +2733,14 @@ class TypoCharacterPerturbation(BasePerturbation):
         perturbed: str,
     ) -> float:
         """
-        Actual character edit ratio = Levenshtein distance / original length.
+        Actual character edit ratio = Levenshtein distance / alphabetic-char count.
+
+        The denominator is the number of ALPHABETIC characters in the original
+        text, to stay consistent with how the target number of edits is chosen
+        in _generate_candidate (target_edits = round(alpha_count * intensity)).
+        Using total length here (including digits, spaces, punctuation) would
+        bias the measured ratio downward for texts with many non-letters and
+        make the target band harder to hit.
 
         This is the HONEST measure of how much changed. We compute it against
         the generated candidate rather than trusting the number of operations
@@ -2740,7 +2750,11 @@ class TypoCharacterPerturbation(BasePerturbation):
         if not original:
             return 0.0
 
-        return self._edit_distance(original, perturbed) / len(original)
+        alpha_count = sum(1 for c in original if c.isalpha())
+        if alpha_count == 0:
+            return 0.0
+
+        return self._edit_distance(original, perturbed) / alpha_count
 
     @staticmethod
     def _edit_distance(original: str, perturbed: str) -> int:
@@ -3158,9 +3172,9 @@ class PerturbationEngine:
 
             "actual_ratio_all_words",
 
-            "word_cosine_similarity_mean",
-            "word_cosine_similarity_min",
-            "word_cosine_similarity_max",
+            "similarity_score_mean",
+            "similarity_score_min",
+            "similarity_score_max",
 
             "is_same_as_original",
             "similarity_in_range",
@@ -3213,22 +3227,22 @@ class PerturbationEngine:
                 result_df["actual_ratio_all_words"].mean()
             ) if total_count else 0.0,
 
-            "mean_word_cosine_similarity": float(
-                result_df["word_cosine_similarity_mean"].dropna().mean()
+            "mean_similarity_score": float(
+                result_df["similarity_score_mean"].dropna().mean()
             )
-            if result_df["word_cosine_similarity_mean"].notna().any()
+            if result_df["similarity_score_mean"].notna().any()
             else None,
 
-            "min_word_cosine_similarity": float(
-                result_df["word_cosine_similarity_min"].dropna().min()
+            "min_similarity_score": float(
+                result_df["similarity_score_min"].dropna().min()
             )
-            if result_df["word_cosine_similarity_min"].notna().any()
+            if result_df["similarity_score_min"].notna().any()
             else None,
 
-            "max_word_cosine_similarity": float(
-                result_df["word_cosine_similarity_max"].dropna().max()
+            "max_similarity_score": float(
+                result_df["similarity_score_max"].dropna().max()
             )
-            if result_df["word_cosine_similarity_max"].notna().any()
+            if result_df["similarity_score_max"].notna().any()
             else None,
         }
 
@@ -3275,10 +3289,10 @@ class PerturbationEngine:
         )
 
         logger.info(
-            "%s mean word cosine similarity: %.4f",
+            "%s mean similarity score: %.4f",
             level.upper(),
             result_df[
-                "word_cosine_similarity_mean"
+                "similarity_score_mean"
             ].mean(),
         )
 
