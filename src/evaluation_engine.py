@@ -1126,6 +1126,51 @@ class EvaluationEngine:
                 f"{perturbation_output_dir}"
             )
 
+    # =========================================================================
+    # HELPERS FOR SUCCESS-ONLY FILTERING
+    # =========================================================================
+
+    @staticmethod
+    def _successful_ids(perturbed_df: pd.DataFrame) -> set:
+        """
+        Return the set of sample IDs that were SUCCESSFULLY perturbed in this
+        DataFrame (perturbation_success == True).
+
+        We use the 'id' column (the stable per-sample identifier from the CSV
+        schema) so intersections are by exact sample, never by row position.
+        """
+        if 'id' not in perturbed_df.columns:
+            raise ValueError(
+                "Cannot filter by successful IDs: 'id' column is missing "
+                "from the perturbed DataFrame."
+            )
+        if 'perturbation_success' not in perturbed_df.columns:
+            raise ValueError(
+                "Cannot filter by successful IDs: 'perturbation_success' "
+                "column is missing from the perturbed DataFrame."
+            )
+        successful = perturbed_df['perturbation_success'].astype(bool)
+        return set(perturbed_df.loc[successful, 'id'].tolist())
+
+    @staticmethod
+    def _mean_achieved_intensity(perturbed_df: pd.DataFrame) -> Optional[float]:
+        """
+        Mean achieved perturbation intensity over the SUCCESSFUL rows only,
+        reported in each mechanism's natural unit:
+          * semantic -> actual_ratio_all_words (word-change ratio)
+          * typo     -> char_edit_ratio        (character edit ratio)
+        Returns None if neither column is present.
+        """
+        successful = perturbed_df['perturbation_success'].astype(bool)
+        rows = perturbed_df.loc[successful]
+        if len(rows) == 0:
+            return None
+        if 'char_edit_ratio' in rows.columns and rows['char_edit_ratio'].notna().any():
+            return float(rows['char_edit_ratio'].astype(float).mean())
+        if 'actual_ratio_all_words' in rows.columns:
+            return float(rows['actual_ratio_all_words'].astype(float).mean())
+        return None
+
     def generate_all_perturbations(
         self,
         test_data: Dict[str, pd.DataFrame]
@@ -1334,27 +1379,122 @@ class EvaluationEngine:
                     perturbation_engine=self.perturbation_engine,
                     perturbation_output_dir=self.perturbation_output_dir
                 )
+                # Used to score the mechanism-specific aligned clean baseline.
+                in_domain_evaluator = InDomainEvaluator(
+                    self.model_trainers[domain]
+                )
+
+                # The original, unperturbed test set for this domain. The
+                # aligned clean baselines are drawn from exactly these rows.
+                domain_test_df = test_data[domain]
+
                 clean_results = results['in_domain'][domain]
 
-                # Shared clean baseline sits once at the top; the two
-                # perturbation types each get their own low/medium/high branch.
+                # PRESERVE the global (full test-set) clean baseline so legacy
+                # downstream code that reads perturbation[domain]['clean'] keeps
+                # working unchanged.
                 domain_perturbation = {'clean': clean_results}
 
                 for ptype in PERTURBATION_TYPES:
                     domain_perturbation[ptype] = {}
 
+                    # ------------------------------------------------------
+                    # STEP 1: report success rate + achieved intensity, and
+                    # collect the successful IDs per level (for this mechanism).
+                    # ------------------------------------------------------
+                    success_ids_by_level = {}
                     for level in PERTURBATION_LEVELS:
-                        perturbed_df = (
-                            perturbed_test_data[domain][ptype][level]
+                        perturbed_df = perturbed_test_data[domain][ptype][level]
+                        n_total = len(perturbed_df)
+                        success_ids = self._successful_ids(perturbed_df)
+                        success_ids_by_level[level] = success_ids
+
+                        success_rate = (
+                            len(success_ids) / n_total if n_total else 0.0
                         )
-                        domain_perturbation[ptype][level] = (
-                            evaluator.evaluate_existing_perturbation(
-                                perturbed_df=perturbed_df,
-                                clean_results=clean_results,
-                                perturbation_level=level,
-                                domain=domain
-                            )
+                        mean_intensity = self._mean_achieved_intensity(perturbed_df)
+                        logger.info(
+                            "[%s | %s | %s] success rate: %d/%d (%.2f%%) | "
+                            "mean achieved intensity: %s",
+                            domain, ptype, level,
+                            len(success_ids), n_total, success_rate * 100,
+                            f"{mean_intensity:.4f}" if mean_intensity is not None else "n/a",
                         )
+
+                    # ------------------------------------------------------
+                    # STEP 2: intersect successful IDs across the 3 levels.
+                    # Done INDEPENDENTLY per mechanism (semantic vs typo never
+                    # mix). This is an exact-ID intersection, not truncation.
+                    # ------------------------------------------------------
+                    common_ids = (
+                        success_ids_by_level['low']
+                        & success_ids_by_level['medium']
+                        & success_ids_by_level['high']
+                    )
+                    logger.info(
+                        "[%s | %s] common successful IDs across low/medium/high: %d",
+                        domain, ptype, len(common_ids),
+                    )
+
+                    # ------------------------------------------------------
+                    # STEP 3: aligned CLEAN baseline for this mechanism =
+                    # the ORIGINAL unperturbed rows whose id is in common_ids.
+                    # ------------------------------------------------------
+                    aligned_clean_df = domain_test_df[
+                        domain_test_df['id'].isin(common_ids)
+                    ].copy()
+                    aligned_clean_results = in_domain_evaluator.evaluate(
+                        aligned_clean_df, domain
+                    )
+                    # Record how many samples survived the intersection.
+                    aligned_clean_results['common_ids_count'] = len(common_ids)
+                    domain_perturbation[ptype]['clean'] = aligned_clean_results
+
+                    # ------------------------------------------------------
+                    # SAMPLE-COUNT TRANSPARENCY (before any F1 is computed).
+                    # After the common_ids filter, every set — Aligned Clean,
+                    # Low, Medium, High — must contain exactly the same samples.
+                    # We print each count explicitly so it is easy to confirm.
+                    # ------------------------------------------------------
+                    clean_count = len(aligned_clean_df)
+                    level_counts = {
+                        level: int(
+                            perturbed_test_data[domain][ptype][level]['id']
+                            .isin(common_ids).sum()
+                        )
+                        for level in PERTURBATION_LEVELS
+                    }
+                    print(
+                        f"\n[{domain} | {ptype}] Samples surviving common_ids filter:"
+                    )
+                    print(f"    Aligned Clean : {clean_count}")
+                    print(f"    Low           : {level_counts['low']}")
+                    print(f"    Medium        : {level_counts['medium']}")
+                    print(f"    High          : {level_counts['high']}")
+                    logger.info(
+                        "[%s | %s] surviving counts -> clean=%d, low=%d, medium=%d, high=%d",
+                        domain, ptype, clean_count,
+                        level_counts['low'], level_counts['medium'], level_counts['high'],
+                    )
+
+                    # ------------------------------------------------------
+                    # STEP 4: score Low/Medium/High on ONLY common_ids, and
+                    # measure degradation against this mechanism's aligned clean.
+                    # ------------------------------------------------------
+                    for level in PERTURBATION_LEVELS:
+                        perturbed_df = perturbed_test_data[domain][ptype][level]
+                        filtered_df = perturbed_df[
+                            perturbed_df['id'].isin(common_ids)
+                        ].copy()
+
+                        level_results = evaluator.evaluate_existing_perturbation(
+                            perturbed_df=filtered_df,
+                            clean_results=aligned_clean_results,
+                            perturbation_level=level,
+                            domain=domain
+                        )
+                        level_results['common_ids_count'] = len(common_ids)
+                        domain_perturbation[ptype][level] = level_results
 
                 results['perturbation'][domain] = domain_perturbation
         # ============================================================
