@@ -10,7 +10,6 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 from sklearn.model_selection import train_test_split
-from transformers import AutoTokenizer, BertTokenizer
 import logging
 
 from debug_logger import (
@@ -19,7 +18,6 @@ from debug_logger import (
     dbg_data_validation,
     dbg_data_split,
     dbg_data_sample_texts,
-    dbg_tokenizer_samples,
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -52,9 +50,6 @@ class DataManager:
         self.tokenizer = None
         self.raw_data = None
         self.domains = []
-        # Use a per-instance RNG so constructing DataManager does not mutate
-        # the global numpy random state.
-        self._rng = np.random.default_rng(random_seed)
         logger.info(f"DataManager initialized with seed={random_seed}, max_length={max_length}")
 
     @classmethod
@@ -337,110 +332,6 @@ class DataManager:
                         
         return domain_splits
     
-    def initialize_tokenizer(self) -> None:
-        """Initialize the tokenizer for text preprocessing."""
-        logger.info(f"Initializing tokenizer: {self.tokenizer_name}")
-        self.tokenizer = BertTokenizer.from_pretrained(self.tokenizer_name)
-        print(f"token: {type(self.tokenizer)}")
-        logger.info("Tokenizer initialized successfully")
-    
-    def preprocess_texts(
-        self,
-        texts: List[str],
-        padding: str = "max_length",
-        truncation: bool = True
-    ) -> Dict[str, np.ndarray]:
-        """
-        Preprocess texts using the tokenizer.
-        
-        Args:
-            texts: List of text strings to preprocess
-            padding: Padding strategy ('max_length', 'longest', or False)
-            truncation: Whether to truncate sequences exceeding max_length
-        Returns:
-            Dictionary containing input_ids, attention_mask, and token_type_ids
-        Raises:
-            RuntimeError: If tokenizer not initialized
-        """
-        if self.tokenizer is None:
-            raise RuntimeError("Tokenizer not initialized. Call initialize_tokenizer() first.")
-        
-        logger.info(f"Preprocessing {len(texts)} texts")
-
-        # ── debug: show sample tokenisations before batch encoding ─────────
-        dummy_labels = [0] * len(texts)
-        dbg_tokenizer_samples(
-            tokenizer=self.tokenizer,
-            texts=texts,
-            labels=dummy_labels,
-            max_length=self.max_length,
-        )
-        
-        encodings = self.tokenizer(
-            texts,
-            max_length=self.max_length,
-            padding=padding,
-            truncation=truncation,
-            return_tensors="np"
-        )
-        
-        result = {
-            'input_ids': encodings['input_ids'],
-            'attention_mask': encodings['attention_mask']
-        }
-        
-        if 'token_type_ids' in encodings:
-            result['token_type_ids'] = encodings['token_type_ids']
-        
-        logger.info(f"Preprocessing complete. Shape: {result['input_ids'].shape}")
-        
-        return result
-    
-    def organize_by_domain(
-        self,
-        df: pd.DataFrame
-    ) -> Dict[str, pd.DataFrame]:
-        """
-        Organize DataFrame by domain for domain-specific operations.
-        Args:
-            df: DataFrame to organize
-        Returns:
-            Dictionary mapping domain names to their respective DataFrames
-        """
-        logger.info("Organizing data by domain")
-        
-        domain_data = {}
-        for domain in self.domains:
-            domain_df = df[df['domain'] == domain].copy()
-            domain_data[domain] = domain_df
-            logger.info(f"  Domain '{domain}': {len(domain_df)} samples")
-        
-        return domain_data
-    
-    def get_domain_statistics(self, df: pd.DataFrame) -> Dict[str, Dict]:
-        """
-        Calculate statistics for each domain in the dataset.
-        Args:
-            df: DataFrame to analyze
-        Returns:
-            Dictionary with statistics for each domain
-        """
-        statistics = {}
-        
-        for domain in self.domains:
-            domain_df = df[df['domain'] == domain]
-            
-            statistics[domain] = {
-                'total_samples': len(domain_df),
-                'clickbait_count': (domain_df['label'] == 1).sum(),
-                'non_clickbait_count': (domain_df['label'] == 0).sum(),
-                'clickbait_ratio': (domain_df['label'] == 1).mean(),
-                'avg_text_length': domain_df['text'].str.len().mean(),
-                'median_text_length': domain_df['text'].str.len().median()
-            }
-        
-        return statistics
-    
     def get_summary(self) -> Dict:
         """
         Get a summary of the loaded dataset.
@@ -462,77 +353,3 @@ class DataManager:
             "tokenizer": self.tokenizer_name
         }
 
-
-class DatasetValidator:
-    """
-    Utility class for validating dataset integrity and quality.
-    """
-    
-    @staticmethod
-    def validate_balance(df: pd.DataFrame, threshold: float = 0.3) -> bool:
-        """
-        Check if dataset is reasonably balanced.
-        Args:
-            df: DataFrame to validate
-            threshold: Maximum acceptable deviation from 50-50 split
-        Returns:
-            True if balanced within threshold, False otherwise
-        """
-        label_ratio = df['label'].mean()
-        deviation = abs(label_ratio - 0.5)
-        
-        is_balanced = deviation <= threshold
-        
-        if not is_balanced:
-            logger.warning(
-                f"Dataset imbalance detected. Label ratio: {label_ratio:.2%}, "
-                f"deviation: {deviation:.2%}"
-            )
-        
-        return is_balanced
-    
-    @staticmethod
-    def check_text_quality(df: pd.DataFrame) -> Dict[str, int]:
-        """
-        Check for potential text quality issues.
-        Args:
-            df: DataFrame to check
-        Returns:
-            Dictionary with counts of various quality issues
-        """
-        issues = {
-            'empty_texts': (df['text'].str.strip() == '').sum(),
-            'very_short_texts': (df['text'].str.len() < 10).sum(),
-            'very_long_texts': (df['text'].str.len() > 500).sum(),
-            'duplicate_texts': df['text'].duplicated().sum()
-        }
-        
-        for issue_type, count in issues.items():
-            if count > 0:
-                logger.warning(f"Found {count} instances of {issue_type}")
-        
-        return issues
-    
-    @staticmethod
-    def validate_domain_distribution(df: pd.DataFrame) -> bool:
-        """
-        Check if domains are reasonably distributed.
-        Args:
-            df: DataFrame to validate
-        Returns:
-            True if distribution is acceptable, False otherwise
-        """
-        domain_counts = df['domain'].value_counts()
-        min_count = domain_counts.min()
-        max_count = domain_counts.max()
-        
-        ratio = min_count / max_count if max_count > 0 else 0
-        is_balanced = ratio >= 0.5
-        
-        if not is_balanced:
-            logger.warning(
-                f"Domain distribution imbalance detected. "
-                f"Min: {min_count}, Max: {max_count}, Ratio: {ratio:.2%}"
-            )
-        
-        return is_balanced

@@ -59,11 +59,6 @@ def set_debug(enabled: bool) -> None:
     _DEBUG_ENABLED = enabled
 
 
-def is_debug() -> bool:
-    """Return True when debug output is currently enabled."""
-    return _DEBUG_ENABLED
-
-
 def _emit(msg: str) -> None:
     """Write *msg* to the debug logger when debug is enabled."""
     if _DEBUG_ENABLED:
@@ -71,10 +66,6 @@ def _emit(msg: str) -> None:
 
 
 # ── formatting helpers ─────────────────────────────────────────────────────────
-
-def _sep(char: str = "─", width: int = 72) -> str:
-    return char * width
-
 
 def _hdr(tag: str, title: str) -> str:
     return f"\n[{tag}] {'─'*4} {title} {'─'*(max(0, 60 - len(title)))}"
@@ -330,13 +321,6 @@ def dbg_perturbation_metrics(level: str, domain: str, metrics: Dict) -> None:
         _hdr("Perturbation", f"Metrics after perturbation  level={level}  domain={domain}") + "\n" +
         _fmt_dict({k: v for k, v in metrics.items()
                    if isinstance(v, (int, float)) and k != 'confusion_matrix'})
-    )
-
-
-def dbg_perturbation_robustness(level: str, domain: str, rob: Dict) -> None:
-    _emit(
-        _hdr("Perturbation", f"Robustness metrics  level={level}  domain={domain}") + "\n" +
-        _fmt_dict({k: v for k, v in rob.items() if isinstance(v, (int, float))})
     )
 
 
