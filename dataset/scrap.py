@@ -16,11 +16,11 @@ import time
 import random
 import asyncio
 import urllib.parse
-from datetime import datetime, date, timedelta
+from datetime import date, timedelta
 import pandas as pd
 import requests
 import httpx
-from bs4 import BeautifulSoup 
+from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from tqdm.auto import tqdm
 
@@ -40,7 +40,10 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
-] 
+]
+
+# Titles containing these words are skipped (polls / quizzes, not real articles).
+POLLING_WORDS = ("polling", "tebak", "vote", "voting", "pilih siapa")
 
 DOMAINS = {
     "technology": {
@@ -56,15 +59,10 @@ DOMAINS = {
         "detik_host": "inet.detik.com",
         "detik_date_iso": True,
         "detik_channels": [
-            "news",
-            "telecommunication",
-            "gadget",
-            "tips-tricks",
-            "cyber-life",
-            "security",
-            "review",
-            "mobileapps",
-            "inet-grafis",
+            "news", "telecommunication",
+            "gadget", "tips-tricks",
+            "cyber-life", "security",
+            "review", "mobileapps", "inet-grafis",
         ],
         "tribun_channels": ["index-news/techno"],
         "tribun_marker": "techno",
@@ -82,12 +80,9 @@ DOMAINS = {
         "detik_host": "health.detik.com",
         "detik_date_iso": False,
         "detik_channels": [
-            "berita-detikhealth",
-            "diet",
-            "kebugaran",
-            "true-story",
-            "sexual-health",
-            "wellness-beauty",
+            "berita-detikhealth", "diet",
+            "kebugaran", "true-story",
+            "sexual-health", "wellness-beauty",
         ],
         "tribun_channels": ["index-news/kesehatan"],
         "tribun_marker": "kesehatan",
@@ -105,12 +100,9 @@ DOMAINS = {
         "detik_host": "www.detik.com",
         "detik_date_iso": False,
         "detik_channels": [
-            "sekolah",
-            "perguruan-tinggi",
-            "beasiswa",
-            "edutainment",
-            "seleksi-masuk-pt",
-            "detikpedia",
+            "sekolah", "perguruan-tinggi",
+            "beasiswa", "edutainment",
+            "seleksi-masuk-pt", "detikpedia",
         ],
         "tribun_channels": ["index-news/pendidikan"],
         "tribun_marker": "pendidikan",
@@ -128,14 +120,10 @@ DOMAINS = {
         "detik_host": "sport.detik.com",
         "detik_date_iso": False,
         "detik_channels": [
-            "sepakbola",
-            "basket",
-            "moto-gp",
-            "f1",
-            "raket",
-            "sport-lain",
-            "g-sport",
-            "sportstyle",
+            "sepakbola", "basket",
+            "moto-gp", "f1",
+            "raket", "sport-lain",
+            "g-sport", "sportstyle",
         ],
         "tribun_channels": ["index-news/sport"],
         "tribun_marker": "sport",
@@ -157,16 +145,11 @@ DOMAINS = {
         "detik_host": "news.detik.com",
         "detik_date_iso": False,
         "detik_channels": [
-            "berita",
-            "internasional",
-            "bbc",
-            "investigasi",
-            "pemilu",
-            "pilkada",
-            "bangun-indonesia",
-            "nyago-bumi-sriwijaya",
-            "jabodetabek",
-            "hukum",
+            "berita", "internasional",
+            "bbc", "investigasi",
+            "pemilu", "pilkada",
+            "bangun-indonesia", "nyago-bumi-sriwijaya",
+            "jabodetabek", "hukum",
         ],
         "tribun_channels": [
             "index-news/nasional",
@@ -209,7 +192,7 @@ def print_funnel(portal_name, f):
         f"keyword={f['keyword_rejected']}, "
         f"duplicate={f['duplicate']})",
         flush=True,
-    ) 
+    )
 
 
 def clean_title(title):
@@ -229,12 +212,51 @@ def within_window(dstr):
         return False
 
 
+def record_article(articles, seen_urls, seen_titles, funnel, bar, source, url, title, dstr):
+    """Save one accepted article.
+
+    Every scraper runs the SAME final step once an article has passed all of
+    its filters: remember the url/title so we never add it twice, append the
+    row, bump the counters, and tick the progress bar. This helper is that
+    shared step, so the four scrapers don't each repeat it.
+    """
+    seen_urls.add(url)
+    seen_titles.add(title.lower())
+    articles.append({
+        "id": 0, "source": source, "date": dstr,
+        "title": title, "label": None, "url": url,
+    })
+    funnel["collected"] += 1
+    if bar is not None:
+        bar.update(1)
+
+
+def log_fetch(portal_name, url):
+    """Line 1: the exact index URL we are about to request."""
+    print(f"[INDEX] {portal_name} | {url}", flush=True)
+
+
+def log_result(portal_name, scope, date_iso, page, raw_links, new, collected):
+    """Line 2: the per-page result, in ONE shared format for every portal.
+
+    `scope` is the channel name for Detik/Tribun, or "" for CNN/Kompas
+    (which have no channel). A leading space is added only when scope is set,
+    so the output stays clean either way.
+    """
+    scope_part = f"{scope} " if scope else ""
+    print(
+        f"[INDEX] {portal_name} | {scope_part}Date={date_iso} page={page} | "
+        f"raw_links={raw_links} | new={new} | Collected={collected}/{TARGET}",
+        flush=True,
+    )
+
+
 def new_portal_state():
     return {"collected": 0, "last_date": MAX_DATE, "exhausted": False}
 
 
-_stop_factory = StopWordRemoverFactory()
-_stop_remover = _stop_factory.create_stop_word_remover()
+_stop_remover = StopWordRemoverFactory().create_stop_word_remover()
+
 
 def title_has_enough_words(title, min_words=5):
     """Filter only – does NOT change the saved title."""
@@ -264,11 +286,7 @@ async def scrape_detik_batch(cfg, articles, seen_urls, seen_titles, state, quota
 
     while current >= MIN_DATE and added < quota and len(articles) < TARGET:
         date_iso = current.strftime("%Y-%m-%d")
-        date_param = (
-            current.strftime("%Y-%m-%d")
-            if cfg.get("detik_date_iso")
-            else current.strftime("%m/%d/%Y")
-        )
+        date_param = current.strftime("%Y-%m-%d" if cfg.get("detik_date_iso") else "%m/%d/%Y")
 
         # === CHANNEL LOOP (must wrap everything below) ===
         for channel in channels:
@@ -285,7 +303,7 @@ async def scrape_detik_batch(cfg, articles, seen_urls, seen_titles, state, quota
                 if added >= quota or len(articles) >= TARGET:
                     break
 
-                print(f"[INDEX] {portal_name} | {index_base}?page={page}&date={date_param}", flush=True)
+                log_fetch(portal_name, f"{index_base}?page={page}&date={date_param}")
                 headers = {
                     "User-Agent": random.choice(USER_AGENTS),
                     "Accept-Language": "id,en;q=0.9",
@@ -336,21 +354,18 @@ async def scrape_detik_batch(cfg, articles, seen_urls, seen_titles, state, quota
                     new = 0
                     raw_links = len(page_items)
                     for art_url, title_text in page_items.items():
-                        polling_words = ("polling", "tebak", "vote", "voting", "pilih siapa")
-                        
                         if added >= quota or len(articles) >= TARGET:
                             break
                         f["candidates"] += 1
                         if not title_text:
                             continue
-                        if any(w in title_text.lower() for w in polling_words):
+                        if any(w in title_text.lower() for w in POLLING_WORDS):
                             continue
-                        if not title_has_enough_words(title_text):   # ← add
+                        if not title_has_enough_words(title_text):
                             continue
                         if art_url in seen_urls or title_text.lower() in seen_titles:
                             f["duplicate"] += 1
                             continue
-                        
                         m = re.search(r"/(\d{4})/(\d{2})/(\d{2})", art_url)
                         dstr = f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else date_iso
                         if not within_window(dstr):
@@ -359,28 +374,17 @@ async def scrape_detik_batch(cfg, articles, seen_urls, seen_titles, state, quota
                         if not title_has_keyword(title_text, keywords):
                             f["keyword_rejected"] += 1
                             continue
-                        seen_urls.add(art_url)
-                        seen_titles.add(title_text.lower())
-                        articles.append({
-                            "id": 0, "source": "Detik", "date": dstr,
-                            "title": title_text, "label": None, "url": art_url,
-                        })
-                        f["collected"] += 1
+                        record_article(articles, seen_urls, seen_titles, f, bar,
+                                        "Detik", art_url, title_text, dstr)
                         added += 1
                         new += 1
-                        if bar is not None:
-                            bar.update(1)
 
-                    print(
-                        f"[INDEX] {portal_name} | {channel} Date={date_iso} page={page} | "
-                        f"raw_links={raw_links} | new={new} | Collected={len(articles)}/{TARGET}",
-                        flush=True,
-                    )
+                    log_result(portal_name, channel, date_iso, page, raw_links, new, len(articles))
                     if new == 0 and page > 1:
                         break
                 except Exception as e:
                     print(f"[DETIK] error {channel} {date_iso} page={page}: {e}", flush=True)
-                    break 
+                    break
 
         current -= timedelta(days=1)
         state["last_date"] = current
@@ -416,7 +420,7 @@ def scrape_cnn_batch(cfg, articles, seen_urls, seen_titles, state, quota, bar, f
 
         while added < quota and len(articles) < TARGET and empty_streak < 2:
             url = f"{base}?date={date_slash}&page={page}"
-            print(f"[INDEX] {portal_name} | Date={date_iso} | Page={page}", flush=True)
+            log_fetch(portal_name, url)
             headers = {"User-Agent": random.choice(USER_AGENTS), "Accept-Language": "id,en;q=0.9"}
             try:
                 time.sleep(random.uniform(1.0, 2.0))
@@ -453,12 +457,7 @@ def scrape_cnn_batch(cfg, articles, seen_urls, seen_titles, state, quota, bar, f
                             candidate_anchors.append(a)
 
                 if not candidate_anchors:
-                    print(
-                        f"[INDEX] {portal_name} | Date={date_iso} Page={page} | "
-                        f"raw_links=0 | new=0 | "
-                        f"Collected={len(articles)}/{TARGET} | Remaining={TARGET - len(articles)}",
-                        flush=True,
-                    )
+                    log_result(portal_name, "", date_iso, page, 0, 0, len(articles))
                     empty_streak += 1
                     page += 1
                     continue
@@ -473,7 +472,7 @@ def scrape_cnn_batch(cfg, articles, seen_urls, seen_titles, state, quota, bar, f
                         continue
                     raw_links += 1
                     f["candidates"] += 1
-                    
+
                     # prefer <h2> inside article (clean title), fallback to link text
                     title_el = None
                     parent = a.find_parent("article") or a.find_parent(class_=re.compile(r"flex|media|list"))
@@ -483,12 +482,10 @@ def scrape_cnn_batch(cfg, articles, seen_urls, seen_titles, state, quota, bar, f
                         title_text = clean_title(title_el.get_text(strip=True))
                     else:
                         title_text = clean_title(re.sub(r"\s+", " ", a.get_text()).strip())
-                        
                     if not title_text:
                         continue
-                    if not title_has_enough_words(title_text):       # ← add
+                    if not title_has_enough_words(title_text):
                         continue
-                        
                     if href in seen_urls or title_text.lower() in seen_titles:
                         f["duplicate"] += 1
                         continue
@@ -500,24 +497,12 @@ def scrape_cnn_batch(cfg, articles, seen_urls, seen_titles, state, quota, bar, f
                     if not title_has_keyword(title_text, keywords):
                         f["keyword_rejected"] += 1
                         continue
-                    seen_urls.add(href)
-                    seen_titles.add(title_text.lower())
-                    articles.append({
-                        "id": 0, "source": "CNN Indonesia", "date": dstr,
-                        "title": title_text, "label": None, "url": href,
-                    })
-                    f["collected"] += 1
+                    record_article(articles, seen_urls, seen_titles, f, bar,
+                                   "CNN Indonesia", href, title_text, dstr)
                     added += 1
                     new += 1
-                    if bar is not None:
-                        bar.update(1)
 
-                print(
-                    f"[INDEX] {portal_name} | Date={date_iso} Page={page} | "
-                    f"raw_links={raw_links} | new={new} | "
-                    f"Collected={len(articles)}/{TARGET} | Remaining={TARGET - len(articles)}",
-                    flush=True,
-                )
+                log_result(portal_name, "", date_iso, page, raw_links, new, len(articles))
                 if raw_links == 0:
                     break
                 page += 1
@@ -569,7 +554,7 @@ async def scrape_kompas_batch(cfg, articles, seen_urls, seen_titles, state, quot
 
                 while added < quota and len(articles) < TARGET and fails < 5:
                     url = f"https://indeks.kompas.com/?site={site}&date={date_iso}&page={page_num}"
-                    print(f"[INDEX] {portal_name} | Date={date_iso} | Page={page_num}", flush=True)
+                    log_fetch(portal_name, url)
 
                     try:
                         await page.goto(url, timeout=30000, wait_until="domcontentloaded")
@@ -616,17 +601,15 @@ async def scrape_kompas_batch(cfg, articles, seen_urls, seen_titles, state, quot
                             if href in seen_urls:
                                 f["duplicate"] += 1
                                 continue
-                            
                             # get title from h2 if exists, else from link text
                             h2 = await link.query_selector("h2")
                             if h2:
                                 title_text = clean_title((await h2.inner_text()).strip())
                             else:
                                 title_text = clean_title((await link.inner_text()).strip())
-                            
                             if not title_text:
                                 continue
-                            if not title_has_enough_words(title_text):  # ← add
+                            if not title_has_enough_words(title_text):
                                 continue
                             if title_text.lower() in seen_titles:
                                 f["duplicate"] += 1
@@ -642,24 +625,12 @@ async def scrape_kompas_batch(cfg, articles, seen_urls, seen_titles, state, quot
                             if not title_has_keyword(title_text, keywords):
                                 f["keyword_rejected"] += 1
                                 continue
-                            seen_urls.add(href)
-                            seen_titles.add(title_text.lower())
-                            articles.append({
-                                "id": 0, "source": "Kompas", "date": dstr,
-                                "title": title_text, "label": None, "url": href,
-                            })
-                            f["collected"] += 1
+                            record_article(articles, seen_urls, seen_titles, f, bar,
+                                           "Kompas", href, title_text, dstr)
                             added += 1
                             new += 1
-                            if bar is not None:
-                                bar.update(1)
 
-                        print(
-                            f"[INDEX] {portal_name} | Date={date_iso} Page={page_num} | "
-                            f"raw_links={raw_links} | new={new} | "
-                            f"Collected={len(articles)}/{TARGET} | Remaining={TARGET - len(articles)}",
-                            flush=True,
-                        )
+                        log_result(portal_name, "", date_iso, page_num, raw_links, new, len(articles))
                         if raw_links == 0:
                             break
                         page_num += 1
@@ -749,7 +720,7 @@ async def scrape_tribun_batch(cfg, articles, seen_urls, seen_titles, state, quot
                     and fails < 5
                 ):
                     url = f"https://www.tribunnews.com/{channel}?page={page_num}&date=undefined"
-                    print(f"[INDEX] {portal_name} | Channel={channel} | Page={page_num}", flush=True)
+                    log_fetch(portal_name, url)
                     try:
                         await page.goto(url, timeout=30000, wait_until="domcontentloaded")
                         await asyncio.sleep(random.uniform(2.5, 4.0))
@@ -803,7 +774,7 @@ async def scrape_tribun_batch(cfg, articles, seen_urls, seen_titles, state, quot
                             title_text = clean_title((await link.inner_text()).strip())
                             if not title_text:
                                 continue
-                            if not title_has_enough_words(title_text):  # ← add
+                            if not title_has_enough_words(title_text):
                                 continue
                             if title_text.lower() in seen_titles:
                                 f["duplicate"] += 1
@@ -835,24 +806,12 @@ async def scrape_tribun_batch(cfg, articles, seen_urls, seen_titles, state, quot
                             # inside window
                             dated_ok += 1
 
-                            seen_urls.add(href)
-                            seen_titles.add(title_text.lower())
-                            articles.append({
-                                "id": 0, "source": "Tribun News", "date": dstr,
-                                "title": title_text, "label": None, "url": href,
-                            })
-                            f["collected"] += 1
+                            record_article(articles, seen_urls, seen_titles, f, bar,
+                                           "Tribun News", href, title_text, dstr)
                             added += 1
                             new += 1
-                            if bar is not None:
-                                bar.update(1)
 
-                        print(
-                            f"[INDEX] {portal_name} | Channel={channel} Page={page_num} | "
-                            f"raw_links={raw_links} | new={new} | old={dated_old} | new>max={dated_new} | "
-                            f"Collected={len(articles)}/{TARGET} | Remaining={TARGET - len(articles)}",
-                            flush=True,
-                        )
+                        log_result(portal_name, channel, "-", page_num, raw_links, new, len(articles))
                         if added >= quota or len(articles) >= TARGET:
                             break
 
@@ -914,10 +873,10 @@ async def run_domain(domain_key):
     states = {name: new_portal_state() for name in PORTAL_ORDER}
     print(f"\n========== Starting {cfg['label']} scraper (Target: {TARGET}) ==========", flush=True)
     bar = tqdm(total=TARGET, desc=f"Harvesting {cfg['label']}", unit="rows")
+    # Async scrapers only. CNN is synchronous, so it is called directly below.
     scrapers = {
         "Detik": scrape_detik_batch,
         "Kompas": scrape_kompas_batch,
-        "CNN Indonesia": scrape_cnn_batch,
         "Tribun News": scrape_tribun_batch,
     }
     max_rounds = 20          # safety; 4×250=1000 → usually 1-3 rounds enough
@@ -955,13 +914,13 @@ async def run_domain(domain_key):
         if not made_progress:
             print("[ENGINE] no portal made progress → stop", flush=True)
             break
-            
+
     bar.close()
-    
+
     print(f"\n[FUNNEL] {cfg['label']} drop-off by portal:", flush=True)
     for name in PORTAL_ORDER:
         print_funnel(name, funnels[name])
-        
+
     # Finalize
     articles = articles[:TARGET]
     for i, row in enumerate(articles, 1):

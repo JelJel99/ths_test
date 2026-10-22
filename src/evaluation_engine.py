@@ -42,20 +42,22 @@ logger = logging.getLogger(__name__)
 # PERTURBATION STRUCTURE CONSTANTS
 # =============================================================================
 #
-# The robustness experiment applies TWO perturbation mechanisms, each at three
-# intensity levels. The unperturbed data ('clean') is the shared baseline for
-# both mechanisms, so it lives once at the top of the structure rather than
-# under each type.
+# The robustness experiment applies ONE perturbation mechanism (synonym /
+# semantic substitution) at three intensity levels. The unperturbed data
+# ('clean') is the baseline, so it lives once at the top of the structure
+# rather than under the type.
 #
 #   results['perturbation'][domain] = {
 #       'clean': {...},
 #       'semantic': {'low': {...}, 'medium': {...}, 'high': {...}},
-#       'typo':     {'low': {...}, 'medium': {...}, 'high': {...}},
 #   }
 #
-# These names drive every perturbation loop in the pipeline so there are no
-# hard-coded ['low','medium','high'] lists scattered around.
-PERTURBATION_TYPES = ['semantic', 'typo']
+# NOTE: The "typo" (character-noise) mechanism has been removed from the thesis
+# scope. This project now evaluates synonym perturbation only. Keeping a single
+# entry in this list ('semantic') means every perturbation loop in the pipeline
+# automatically processes synonym data only — there are no hard-coded type or
+# level lists scattered around.
+PERTURBATION_TYPES = ['semantic']
 PERTURBATION_LEVELS = ['low', 'medium', 'high']
 
 
@@ -1049,18 +1051,16 @@ class EvaluationEngine:
     @staticmethod
     def _mean_achieved_intensity(perturbed_df: pd.DataFrame) -> Optional[float]:
         """
-        Mean achieved perturbation intensity over the SUCCESSFUL rows only,
-        reported in each mechanism's natural unit:
-          * semantic -> actual_ratio_all_words (word-change ratio)
-          * typo     -> char_edit_ratio        (character edit ratio)
-        Returns None if neither column is present.
+        Mean achieved perturbation intensity over the SUCCESSFUL rows only.
+
+        This project uses ONE perturbation mechanism (synonym / semantic word
+        substitution), whose natural unit is the word-change ratio
+        ``actual_ratio_all_words``. Returns None if that column is absent.
         """
         successful = perturbed_df['perturbation_success'].astype(bool)
         rows = perturbed_df.loc[successful]
         if len(rows) == 0:
             return None
-        if 'char_edit_ratio' in rows.columns and rows['char_edit_ratio'].notna().any():
-            return float(rows['char_edit_ratio'].astype(float).mean())
         if 'actual_ratio_all_words' in rows.columns:
             return float(rows['actual_ratio_all_words'].astype(float).mean())
         return None
@@ -1072,23 +1072,17 @@ class EvaluationEngine:
 
         logger.info("Generating all perturbations ONCE")
 
-        # We generate TWO independent perturbation types for every domain:
+        # We generate ONE perturbation type for every domain:
         #
         #   'semantic' -> synonym substitution  (engine levels: low/medium/high)
-        #   'typo'     -> character typos        (engine levels: typo_low/typo_medium/typo_high)
         #
-        # The PerturbationEngine uses distinct level names per type. For the
-        # semantic type the engine level IS the short level ('low'); for the
-        # typo type it is prefixed ('typo_low'). We STORE every result under the
+        # For the semantic type the engine level IS the short level ('low'), so
+        # no level-name translation is needed. We STORE every result under the
         # short level name so the downstream structure is uniform:
         #
         #   perturbed_test_data[domain][ptype][level] = perturbed_df
         #
         # where ptype in PERTURBATION_TYPES and level in PERTURBATION_LEVELS.
-        def _engine_level(ptype: str, level: str) -> str:
-            """Map (type, short level) -> the level name the engine expects."""
-            return level if ptype == 'semantic' else f"{ptype}_{level}"
-
         perturbed_test_data = {}
 
         for domain, test_df in test_data.items():
@@ -1107,16 +1101,14 @@ class EvaluationEngine:
                 perturbed_test_data[domain][ptype] = {}
 
                 for level in PERTURBATION_LEVELS:
-                    engine_level = _engine_level(ptype, level)
                     logger.info(
-                        f"  Generating {domain} - {ptype} - {level} "
-                        f"(engine level '{engine_level}')"
+                        f"  Generating {domain} - {ptype} - {level}"
                     )
 
                     perturbed_df = self.perturbation_engine.apply_to_dataframe(
                         test_df.copy(),
                         text_column='text',
-                        level=engine_level
+                        level=level
                     )
 
                     # ====================================================
@@ -1137,8 +1129,8 @@ class EvaluationEngine:
                         & perturbed_df['perturbation_in_range'].astype(bool)
                     )
 
-                    # Tag each row with its perturbation type so later analysis
-                    # can separate semantic from typo rows.
+                    # Tag each row with its perturbation type. Only 'semantic'
+                    # (synonym substitution) exists in this project.
                     perturbed_df['perturbation_type'] = ptype
 
                     # ====================================================
@@ -1316,14 +1308,42 @@ class EvaluationEngine:
                         )
 
                     # ------------------------------------------------------
-                    # STEP 2: intersect successful IDs across the 3 levels.
-                    # Done INDEPENDENTLY per mechanism (semantic vs typo never
-                    # mix). This is an exact-ID intersection, not truncation.
+                    # STEP 2: align successful IDs across the 3 levels using
+                    # the ONE standardized project helper
+                    # (pattern_analysis.align_common_successful_ids).
+                    #
+                    # We call it with engine-preserving defaults
+                    # (drop_duplicate_ids=False, sort_result=False) so it
+                    # returns EXACTLY the same set this code produced before:
+                    # an exact-ID intersection of the per-level successful ids.
+                    # Imported lazily so the engine does not hard-depend on the
+                    # analysis module at import time.
                     # ------------------------------------------------------
-                    common_ids = (
-                        success_ids_by_level['low']
-                        & success_ids_by_level['medium']
-                        & success_ids_by_level['high']
+                    import pattern_analysis
+
+                    level_frame_by_level = {
+                        'low': perturbed_test_data[domain][ptype]['low'],
+                        'medium': perturbed_test_data[domain][ptype]['medium'],
+                        'high': perturbed_test_data[domain][ptype]['high'],
+                    }
+
+                    # Diagnostic only: report (never drop) duplicate ids so we
+                    # can assess their impact separately. Behaviour unchanged.
+                    duplicate_counts = pattern_analysis.count_duplicate_ids_per_level(
+                        level_frame_by_level
+                    )
+                    for level in PERTURBATION_LEVELS:
+                        if duplicate_counts[level] > 0:
+                            logger.warning(
+                                "[%s | %s | %s] duplicate ids present (count=%d) - "
+                                "reported only, NOT dropped (engine behaviour preserved).",
+                                domain, ptype, level, duplicate_counts[level],
+                            )
+
+                    common_ids = pattern_analysis.align_common_successful_ids(
+                        level_frame_by_level,
+                        drop_duplicate_ids=False,
+                        sort_result=False,
                     )
                     logger.info(
                         "[%s | %s] common successful IDs across low/medium/high: %d",
@@ -1451,7 +1471,7 @@ class EvaluationEngine:
                 key = f"{source_domain}_to_{target_domain}"
 
                 # Mirror the in-domain structure: a shared 'clean' baseline,
-                # then a 'semantic' and a 'typo' branch each with low/medium/high.
+                # then a single 'semantic' branch with low/medium/high.
                 results['cross_domain_perturbation'][key] = {}
                 for ptype in PERTURBATION_TYPES:
                     results['cross_domain_perturbation'][key][ptype] = {}

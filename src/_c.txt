@@ -1,0 +1,8 @@
+﻿python : [Errno 2] No such file or directory: 'src/evaluate_pipeline.py'
+At line:1 char:1
++ python -m py_compile src/evaluate_pipeline.py 2>&1 | Out-File _c.txt  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([Errno 2] No su...te_pipeline.py' 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

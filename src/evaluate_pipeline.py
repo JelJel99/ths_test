@@ -295,10 +295,85 @@ class EvaluationPipeline:
         except Exception as e:
             logger.warning(f"Error analysis failed (non-fatal): {e}")
 
+        # Run pattern-based robustness analysis on the synonym-perturbation CSVs
+        # that were just written to perturbation_output_dir. We reuse the
+        # already-loaded specialist trainers (no checkpoint reload, no training).
+        # This step is skipped when perturbation testing was skipped, because it
+        # needs the per-level perturbed CSVs.
+        if not skip_perturbation:
+            logger.info(f"\n[STEP 3c] Pattern Analysis for {model_name.upper()}")
+            try:
+                self.run_pattern_analysis_for_model(
+                    model_name=model_name,
+                    domain_trainers=domain_trainers,
+                    perturbation_results_root=perturbation_output_dir,
+                )
+            except Exception as e:
+                logger.warning(f"Pattern analysis failed (non-fatal): {e}")
+
         total_time = total_timer.stop()
         logger.info(f"Evaluation completed in {total_time:.2f}s ({total_time/60:.2f} minutes)")
 
         return results
+
+    def run_pattern_analysis_for_model(
+        self,
+        model_name: str,
+        domain_trainers: Dict[str, ModelTrainer],
+        perturbation_results_root: str,
+    ) -> None:
+        """
+        Run the SUCCESS-BASED pattern robustness analysis for one model.
+
+        This reads the per-domain Low/Medium/High *semantic* (synonym)
+        perturbation CSVs that ``EvaluationEngine.generate_all_perturbations``
+        wrote under ``perturbation_results_root``. It then:
+
+          * Report A - reports per-level perturbation validity (success/fail
+            counts and rates), keeping failures visible; and
+          * Report B - aligns ONLY the samples successfully perturbed at all
+            three levels (by the standardized common-id method), classifies the
+            five text-equality patterns, and scores the model on each pattern.
+
+        The model is NOT retrained and NOT reloaded: we build a predict function
+        that reuses the specialist ``ModelTrainer`` already loaded for each
+        domain. The two reports are printed to the log/notebook; the returned
+        DataFrames are available if a caller wants to persist them.
+        """
+        # Imported here (not at module top) so the rest of the evaluation
+        # pipeline does not depend on this analysis module being importable.
+        import pattern_analysis
+
+        # Build a factory: given a domain, return a predict function that uses
+        # that domain's already-loaded specialist trainer.
+        def predict_fn_factory_for_domain(domain: str):
+            trainer_for_domain = domain_trainers[domain]
+
+            def predict_texts(texts: List[str]) -> List[int]:
+                if len(texts) == 0:
+                    return []
+                predicted_labels, _probabilities = trainer_for_domain.predict(texts)
+                predicted_labels_as_int = []
+                for predicted_label in np.asarray(predicted_labels).ravel().tolist():
+                    predicted_labels_as_int.append(int(predicted_label))
+                return predicted_labels_as_int
+
+            return predict_texts
+
+        # Only analyse domains whose specialist checkpoint was actually loaded.
+        domains_to_analyse = list(domain_trainers.keys())
+
+        pattern_analysis.run_success_based_pattern_analysis(
+            results_root=perturbation_results_root,
+            predict_fn_factory=predict_fn_factory_for_domain,
+            domains=domains_to_analyse,
+            ptype="semantic",
+            print_reports=True,
+        )
+        logger.info(
+            f"Success-based pattern analysis for {model_name.upper()} complete "
+            f"(source CSVs under {perturbation_results_root})"
+        )
 
     def perform_statistical_analysis(
         self,
