@@ -452,7 +452,7 @@ class ModelTrainer:
             predictions = torch.argmax(logits, dim=1)
             correct_predictions += (predictions == labels).sum().item()
             total_samples += labels.size(0)
-            total_loss += loss.item()
+            total_loss += loss.item() * labels.size(0)
 
             # Update progress bar
             progress_bar.set_postfix({
@@ -469,8 +469,8 @@ class ModelTrainer:
                 loss=loss.item(),
             )
 
-        avg_loss = total_loss / len(train_loader)
-        accuracy = correct_predictions / total_samples
+        avg_loss = total_loss / total_samples
+        accuracy = correct_predictions / total_samples 
 
         train_metrics = {'loss': avg_loss, 'accuracy': accuracy}
         # ── debug: epoch training summary ─────────────────────────────────
