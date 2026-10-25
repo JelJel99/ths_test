@@ -199,9 +199,7 @@ def clean_title(title):
     if not title:
         return None
     title = re.sub(r"\s+", " ", title).strip()
-    title = re.sub(r"\s+\d{6,}$", "", title)
-    title = re.sub(r"^(Foto:|Video:|Infografis:|Polling)\s*[:\-]?\s*", "", title, flags=re.I)
-    return title if len(title) > 15 else None
+    return title
 
 
 def within_window(dstr):
