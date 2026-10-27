@@ -1115,17 +1115,35 @@ class EvaluationEngine:
                     # DEFINE FINAL PERTURBATION SUCCESS
                     # ====================================================
 
-                    if (
-                        'is_same_as_original' not in perturbed_df.columns
-                        or 'perturbation_in_range' not in perturbed_df.columns
-                    ):
+                    required_success_columns = [
+                        'is_same_as_original',
+                        'similarity_in_range',
+                        'perturbation_in_range',
+                    ]
+                    missing_success_columns = [
+                        column_name
+                        for column_name in required_success_columns
+                        if column_name not in perturbed_df.columns
+                    ]
+                    if missing_success_columns:
                         raise ValueError(
                             "Required perturbation validation columns are missing: "
-                            "'is_same_as_original' and/or 'perturbation_in_range'."
+                            f"{missing_success_columns}."
                         )
 
+                    # A perturbation SUCCEEDS only when all three gates hold:
+                    #   1. the text actually changed (not same as original),
+                    #   2. every replacement's cosine similarity is in [0.80, 0.95]
+                    #      (similarity_in_range), and
+                    #   3. it hit its token-change target - 10% low / 20% medium /
+                    #      30% high (perturbation_in_range: words_changed == target).
+                    # If there were too few eligible words to reach the target,
+                    # words_changed < target_count, so perturbation_in_range is
+                    # False and the row is correctly marked a FAILED perturbation
+                    # even though some words may still have been changed.
                     perturbed_df['perturbation_success'] = (
                         (~perturbed_df['is_same_as_original'].astype(bool))
+                        & perturbed_df['similarity_in_range'].astype(bool)
                         & perturbed_df['perturbation_in_range'].astype(bool)
                     )
 
