@@ -44,7 +44,7 @@ import logging
 from pathlib import Path
 from functools import lru_cache
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -169,7 +169,6 @@ class _SimilarityChecker:
         device: Optional[str] = None,
         batch_size: int = 32,
     ):
-        # self.device = "cpu"
         self.device = device or (
             "cuda"
             if torch.cuda.is_available()
@@ -191,10 +190,6 @@ class _SimilarityChecker:
             model_name
         ).to(self.device)
 
-        print(f"Model Name: {model_name}")
-        print(f"Tokenizer: {self.tokenizer}")
-        print(f"Model Used: {self.model}")
-        
         self.model.eval()
 
         logger.info(
@@ -1024,14 +1019,6 @@ class IndonesianThesaurus:
         return None
 
     # =========================================================================
-    # BACKWARD-COMPATIBLE GET ENTRY
-    # =========================================================================
-
-    # =========================================================================
-    # POS
-    # =========================================================================
-
-    # =========================================================================
     # CANDIDATES
     # =========================================================================
 
@@ -1330,7 +1317,6 @@ class SemanticWordSubstitution(
 
         word_diagnostics = []
         eligible = []
-        # candidates = []
 
         for word_position, word_info in enumerate(word_spans):
             word = word_info["word"]
@@ -1567,8 +1553,7 @@ class SemanticWordSubstitution(
                 "candidates"
             ]
 
-            # highest contextual semantic similarity: 0.95
-            #best = self.rng.choice(candidates)
+            # Pick the candidate with the highest contextual cosine similarity.
             best = max(
                 candidates,
                 key=lambda x: x["similarity"],
@@ -1692,11 +1677,6 @@ class SemanticWordSubstitution(
         actual_ratio_all_words = (
             words_changed
             / len(words)
-        )
-
-        actual_ratio_eligible = (
-            words_changed
-            / len(eligible)
         )
 
         # ---------------------------------------------------------------------
