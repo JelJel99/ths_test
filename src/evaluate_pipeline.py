@@ -363,16 +363,23 @@ class EvaluationPipeline:
         # Only analyse domains whose specialist checkpoint was actually loaded.
         domains_to_analyse = list(domain_trainers.keys())
 
+        # Save the three result tables so the notebook can simply read+plot them.
+        pattern_analysis_output_dir = os.path.join(
+            perturbation_results_root, "pattern_analysis"
+        )
+
         pattern_analysis.run_success_based_pattern_analysis(
             results_root=perturbation_results_root,
             predict_fn_factory=predict_fn_factory_for_domain,
             domains=domains_to_analyse,
             ptype="semantic",
             print_reports=True,
+            output_dir=pattern_analysis_output_dir,
         )
         logger.info(
             f"Success-based pattern analysis for {model_name.upper()} complete "
-            f"(source CSVs under {perturbation_results_root})"
+            f"(source CSVs under {perturbation_results_root}; "
+            f"tables saved to {pattern_analysis_output_dir})"
         )
 
     def perform_statistical_analysis(
