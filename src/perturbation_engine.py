@@ -1501,25 +1501,38 @@ class SemanticWordSubstitution(
         # Only eligible words can be selected to satisfy this target.
         # ---------------------------------------------------------------------
 
-        requested_target_count  = int(
+        # The REQUESTED target is the number of word changes the intensity asks
+        # for (10% / 20% / 30% of all words). We never shrink it: success is
+        # always judged against this original request.
+        requested_target_count = int(
             np.floor(
                 len(words) * intensity + 0.5
             )
         )
 
-        target_count = min(
-            requested_target_count ,
+        # We may not HAVE enough eligible words to reach the requested target.
+        # Record that fact; it marks the row as a failed perturbation later,
+        # even though we still change as many words as we can.
+        insufficient_eligible_words = (
+            len(eligible) < requested_target_count
+        )
+
+        # The number of words we will actually try to change is capped by how
+        # many eligible words exist. This is ONLY used for selection, never for
+        # judging success.
+        actual_target_count = min(
+            requested_target_count,
             len(eligible),
         )
 
-        if target_count == 0:
+        if requested_target_count == 0:
             return self._infeasible_result(
                 text,
                 "TARGET_COUNT_ROUNDED_TO_ZERO",
                 target_intensity=intensity,
                 total_words=len(words),
                 eligible_words=len(eligible),
-                target_words=target_count,
+                target_words=requested_target_count,
                 valid_replacements=0,
                 failed_lookup_words=lookup_stats["failed"],
                 diagnostic_stats=diagnostic_stats,
@@ -1547,7 +1560,7 @@ class SemanticWordSubstitution(
         # ---------------------------------------------------------------------
 
         for item in shuffled:
-            if len(replacements) >= target_count:
+            if len(replacements) >= actual_target_count:
                 break
 
             candidates = item[
@@ -1606,17 +1619,24 @@ class SemanticWordSubstitution(
             )
 
         # ---------------------------------------------------------------------
-        # Cannot satisfy requested intensity
+        # Cannot change ANY word -> truly infeasible (headline would be
+        # unchanged, so there is nothing partial to keep).
+        #
+        # NOTE: we deliberately do NOT bail out just because we changed fewer
+        # words than the REQUESTED target. When there are too few eligible
+        # words, we keep the partially-perturbed headline for analysis and let
+        # the success flags below mark it as a FAILED perturbation
+        # (insufficient_eligible_words = True).
         # ---------------------------------------------------------------------
 
-        if len(replacements) < target_count:
+        if len(replacements) == 0:
             return self._infeasible_result(
                 text,
                 "INSUFFICIENT_VALID_REPLACEMENTS",
                 target_intensity=intensity,
                 total_words=len(words),
                 eligible_words=len(eligible),
-                target_words=target_count,
+                target_words=requested_target_count,
                 valid_replacements=len(replacements),
                 failed_lookup_words=lookup_stats["failed"],
                 diagnostic_stats=diagnostic_stats,
@@ -1683,9 +1703,10 @@ class SemanticWordSubstitution(
         # Validate every replacement
         # ---------------------------------------------------------------------
         logger.info(
-            "DEBUG replacements=%d target_count=%d eligible=%d",
+            "DEBUG replacements=%d requested_target=%d actual_target=%d eligible=%d",
             len(replacements),
-            target_count,
+            requested_target_count,
+            actual_target_count,
             len(eligible),
         )
 
@@ -1711,6 +1732,30 @@ class SemanticWordSubstitution(
             similarity_min = np.nan
             similarity_max = np.nan
 
+        is_same_as_original = (text == perturbed_text)
+
+        # Did we change EXACTLY the requested number of words? This is judged
+        # against the ORIGINAL requested target, never the eligibility-capped
+        # one, so a partial perturbation (too few eligible words) does not count
+        # as hitting the target.
+        perturbation_in_range = (
+            words_changed == requested_target_count
+        )
+
+        # A perturbation SUCCEEDS only when all gates hold:
+        #   1. the headline actually changed,
+        #   2. every replacement's cosine is in [sim_min, sim_max] (0.80-0.95),
+        #   3. it hit the requested token target (10% / 20% / 30%), and
+        #   4. there were enough eligible words to meet that request.
+        # (3) and (4) overlap in most cases, but we keep both so the reason is
+        # explicit and auditable.
+        perturbation_success = (
+            (not is_same_as_original)
+            and similarity_valid
+            and perturbation_in_range
+            and (not insufficient_eligible_words)
+        )
+
         return {
             "original_text": text,
             "perturbed_text": perturbed_text,
@@ -1724,18 +1769,20 @@ class SemanticWordSubstitution(
             "failed_lookup_words": lookup_stats["failed"],
 
             "eligible_words": len(eligible),
-            "target_words": target_count,
+            # The requested target (never capped) is what success is judged on.
+            "target_words": requested_target_count,
+            # How many we could actually attempt given the eligible words.
+            "actual_target_words": actual_target_count,
 
             "can_satisfy_target": (
-                len(eligible) >= target_count
+                not insufficient_eligible_words
             ),
-            "eligible_shortage": (
-                len(eligible) < target_count
-            ),
+            "eligible_shortage": insufficient_eligible_words,
+            "insufficient_eligible_words": insufficient_eligible_words,
             "feasibility_reason": (
-                "SUFFICIENT_ELIGIBLE_WORDS"
-                if len(eligible) >= target_count
-                else "INSUFFICIENT_ELIGIBLE_WORDS"
+                "INSUFFICIENT_ELIGIBLE_WORDS"
+                if insufficient_eligible_words
+                else "SUFFICIENT_ELIGIBLE_WORDS"
             ),
 
             "words_changed": words_changed,
@@ -1745,13 +1792,16 @@ class SemanticWordSubstitution(
             "diagnostic_stats": diagnostic_stats,
             "word_diagnostics": word_diagnostics,
 
-            "is_same_as_original": text == perturbed_text,
+            "is_same_as_original": is_same_as_original,
 
             "similarity_in_range": similarity_valid,
 
-            "perturbation_in_range": (
-                words_changed == target_count
-            ),
+            "perturbation_in_range": perturbation_in_range,
+
+            # Final success flag: all four gates above. Kept here so every
+            # consumer (evaluation engine, pattern analysis) sees one identical
+            # definition.
+            "perturbation_success": perturbation_success,
 
             # Neutral, type-agnostic names: for the semantic mechanism this is
             # the per-word contextual cosine; for typo it is the whole-text
@@ -1843,11 +1893,17 @@ class SemanticWordSubstitution(
             # FEASIBILITY
             # ============================================================
 
+            "actual_target_words": valid_replacements,
+
             "can_satisfy_target": (
                 eligible_words >= target_words
             ),
 
             "eligible_shortage": (
+                eligible_words < target_words
+            ),
+
+            "insufficient_eligible_words": (
                 eligible_words < target_words
             ),
 
@@ -1880,6 +1936,9 @@ class SemanticWordSubstitution(
             "similarity_in_range": False,
 
             "perturbation_in_range": False,
+
+            # Infeasible attempts are always failed perturbations.
+            "perturbation_success": False,
 
             "similarity_score_mean": np.nan,
 
@@ -2070,14 +2129,20 @@ class PerturbationEngine:
         # -----------------------------------------------------------------
         # Define what counts as a SUCCESSFUL perturbation.
         #
-        # Semantic word substitution:
-        #     changed AND word-similarity in [0.80, 0.95] AND hit word target
-        #     (here cosine similarity IS a gate).
+        # Semantic word substitution succeeds only when ALL FOUR gates hold:
+        #     1. the headline actually changed,
+        #     2. word-similarity in [0.80, 0.95] (cosine IS a gate),
+        #     3. it hit the requested word target (10% / 20% / 30%), and
+        #     4. there were enough eligible words to meet that request.
+        #
+        # Gate 4 is what keeps a PARTIAL perturbation (too few eligible words)
+        # out of the success set, even though we still saved its changed text.
         # -----------------------------------------------------------------
         result_df["perturbation_success"] = (
             (~result_df["is_same_as_original"])
             & result_df["similarity_in_range"]
             & result_df["perturbation_in_range"]
+            & (~result_df["insufficient_eligible_words"])
         )
 
         successful_count = int(
@@ -2111,9 +2176,14 @@ class PerturbationEngine:
             "similarity_score_min",
             "similarity_score_max",
 
+            "actual_target_words",
+
             "is_same_as_original",
             "similarity_in_range",
             "perturbation_in_range",
+            "insufficient_eligible_words",
+            "eligible_shortage",
+            "feasibility_reason",
             "perturbation_success",
 
             "diagnostic_stats",
