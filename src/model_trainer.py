@@ -1,4 +1,3 @@
-# 31 AUG - add do_lower_case: True in tokenizer
 """
 Model Trainer Module for IndoBERT Clickbait Detection System
 
@@ -11,7 +10,6 @@ import os
 import json
 import shutil
 import time
-import traceback
 from itertools import product
 import torch
 import torch.nn as nn
@@ -236,7 +234,8 @@ class ModelTrainer:
         num_labels: int = 2,
         max_length: int = 128,
         device: Optional[str] = None,
-        random_seed: int = 42
+        random_seed: int = 42,
+        dropout_rate: float = 0.1
     ):
         """
         Initialize the trainer.
@@ -248,11 +247,13 @@ class ModelTrainer:
             device: Device to use ('cuda', 'cpu', or 'auto').
                     ``None`` and ``"auto"`` both trigger automatic detection.
             random_seed: Random seed for reproducibility
+            dropout_rate: Default dropout rate used when the model is built
         """
         self.model_name = model_name
         self.num_labels = num_labels
         self.max_length = max_length
         self.random_seed = random_seed
+        self.dropout_rate = dropout_rate
 
         # Set device — None and "auto" both mean auto-detect
         if device is None or device == "auto":
@@ -274,14 +275,12 @@ class ModelTrainer:
 
         logger.info(f"ModelTrainer initialized for {model_name}")
         # ── debug: trainer init summary ────────────────────────────────────
-        # dropout_rate is not known at __init__ time (set during initialize_model);
-        # we emit a placeholder here and log the actual value in initialize_model.
         dbg_trainer_init(
             model_name=model_name,
             device=str(self.device),
             max_length=max_length,
             num_labels=num_labels,
-            dropout_rate=0.0,  # actual value logged in initialize_model()
+            dropout_rate=self.dropout_rate,
         )
 
     def _set_seed(self, seed: int) -> None:
@@ -297,6 +296,7 @@ class ModelTrainer:
         Args:
             dropout_rate: Dropout probability
         """
+        self.dropout_rate = dropout_rate
         self.model = IndoBERTClassifier(
             model_name=self.model_name,
             num_labels=self.num_labels,
@@ -452,7 +452,7 @@ class ModelTrainer:
             predictions = torch.argmax(logits, dim=1)
             correct_predictions += (predictions == labels).sum().item()
             total_samples += labels.size(0)
-            total_loss += loss.item() * labels.size(0)
+            total_loss += loss.item()
 
             # Update progress bar
             progress_bar.set_postfix({
@@ -469,8 +469,8 @@ class ModelTrainer:
                 loss=loss.item(),
             )
 
-        avg_loss = total_loss / total_samples
-        accuracy = correct_predictions / total_samples 
+        avg_loss = total_loss / len(train_loader)
+        accuracy = correct_predictions / total_samples
 
         train_metrics = {'loss': avg_loss, 'accuracy': accuracy}
         # ── debug: epoch training summary ─────────────────────────────────
@@ -637,8 +637,9 @@ class ModelTrainer:
                 'val_macro_f1': val_metrics['macro_f1']
             })
 
-            # Check for improvement
-            # We use >= 0 to ensure we at least save the first epoch's model
+            # Check for improvement.
+            # best_macro_f1 starts at -1, so the first epoch (F1 >= 0) always
+            # counts as an improvement and gets saved.
             if val_metrics['macro_f1'] > best_macro_f1:
                 best_macro_f1 = val_metrics['macro_f1']
                 patience_counter = 0
