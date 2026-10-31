@@ -352,11 +352,9 @@ class EvaluationPipeline:
             def predict_texts(texts: List[str]) -> List[int]:
                 if len(texts) == 0:
                     return []
+                # predict() already returns a 1-D array of label ints.
                 predicted_labels, _probabilities = trainer_for_domain.predict(texts)
-                predicted_labels_as_int = []
-                for predicted_label in np.asarray(predicted_labels).ravel().tolist():
-                    predicted_labels_as_int.append(int(predicted_label))
-                return predicted_labels_as_int
+                return [int(label) for label in predicted_labels]
 
             return predict_texts
 
@@ -419,11 +417,15 @@ class EvaluationPipeline:
                 for domain, domain_results in results.get('in_domain', {}).items():
                     f1_scores.append(float(domain_results['metrics']['macro_f1']))
 
-                # 2. Perturbation F1 — one observation per (domain × level)
-                for domain, levels in results.get('perturbation', {}).items():
+                # 2. Perturbation F1 — one observation per (domain × level).
+                # The low/medium/high blocks live under the "semantic"
+                # mechanism: perturbation[domain]["semantic"][level].
+                for domain, domain_block in results.get('perturbation', {}).items():
+                    semantic_block = domain_block.get('semantic', {})
                     for level in ['low', 'medium', 'high']:
-                        if level in levels:
-                            f1_scores.append(float(levels[level]['metrics']['macro_f1']))
+                        level_block = semantic_block.get(level)
+                        if level_block is not None:
+                            f1_scores.append(float(level_block['metrics']['macro_f1']))
 
                 model_f1_sequences[model_name] = np.array(f1_scores)
                 logger.info(
